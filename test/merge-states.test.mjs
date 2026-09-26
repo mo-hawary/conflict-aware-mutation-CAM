@@ -206,3 +206,233 @@ test("rejects unsupported state values", () => {
     CAMConfigError,
   )
 })
+
+const nest = (depth) => {
+  const root = {}
+  let current = root
+  for (let level = 1; level < depth; level += 1) {
+    current.child = {}
+    current = current.child
+  }
+  return root
+}
+
+test("treats -0 and 0 as equal", () => {
+  assert.deepEqual(
+    mergeStates({
+      originalState: { n: 0 },
+      submittedState: { n: -0 },
+      currentServerState: { n: 1 },
+    }),
+    { ok: true, value: { n: 1 }, conflicts: [] },
+  )
+})
+
+test("sorts output keys on recursive and whole-value paths", () => {
+  const recursed = mergeStates({
+    originalState: { z: 1, a: 1 },
+    submittedState: { z: 2, a: 1 },
+    currentServerState: { z: 1, a: 2 },
+  })
+  const wholeValue = mergeStates({
+    originalState: { z: 1, a: 1 },
+    submittedState: { z: 1, a: 1 },
+    currentServerState: { z: 1, a: 2, items: [{ y: 1, b: 1 }] },
+  })
+
+  assert.deepEqual(Object.keys(recursed.value), ["a", "z"])
+  assert.deepEqual(Object.keys(wholeValue.value), ["a", "items", "z"])
+  assert.deepEqual(Object.keys(wholeValue.value.items[0]), ["b", "y"])
+})
+
+test("rejects symbol-keyed properties", () => {
+  assert.throws(
+    () =>
+      mergeStates({
+        originalState: { a: 1 },
+        submittedState: { a: 1, [Symbol("x")]: 1 },
+        currentServerState: { a: 1 },
+      }),
+    CAMConfigError,
+  )
+})
+
+test("rejects input deeper than the nesting limit with a short message", () => {
+  const deep = nest(20_000)
+
+  assert.throws(
+    () => mergeStates({ originalState: deep, submittedState: deep, currentServerState: deep }),
+    (error) => error instanceof CAMConfigError && error.message.length < 300,
+  )
+})
+
+test("accepts input at the nesting limit", () => {
+  const atLimit = nest(512)
+
+  assert.equal(
+    mergeStates({ originalState: atLimit, submittedState: atLimit, currentServerState: atLimit }).ok,
+    true,
+  )
+})
+
+test("rejects cyclic input", () => {
+  const cyclic = { a: 1 }
+  cyclic.self = cyclic
+
+  assert.throws(
+    () => mergeStates({ originalState: cyclic, submittedState: {}, currentServerState: {} }),
+    CAMConfigError,
+  )
+})
+
+test("allows shared non-cyclic references", () => {
+  const shared = { city: "Cairo" }
+
+  assert.equal(
+    mergeStates({
+      originalState: { billing: shared, shipping: shared },
+      submittedState: { billing: shared, shipping: shared },
+      currentServerState: { billing: shared, shipping: shared },
+    }).ok,
+    true,
+  )
+})
+
+test("rejects undefined, NaN, and infinite values", () => {
+  for (const bad of [undefined, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+    assert.throws(
+      () => mergeStates({ originalState: { a: 1 }, submittedState: { a: bad }, currentServerState: { a: 1 } }),
+      CAMConfigError,
+    )
+  }
+
+  assert.throws(
+    () => mergeStates({ originalState: [1, , 3], submittedState: [], currentServerState: [] }),
+    CAMConfigError,
+  )
+})
+
+test("keeps keys containing dots and brackets as single path segments", () => {
+  const result = mergeStates({
+    originalState: { "a.b": 1, "x[0]": 1 },
+    submittedState: { "a.b": 2, "x[0]": 2 },
+    currentServerState: { "a.b": 3, "x[0]": 3 },
+  })
+
+  assert.deepEqual(
+    result.conflicts.map((conflict) => conflict.path),
+    [["a.b"], ["x[0]"]],
+  )
+})
+
+test("copies a __proto__ key as an own property without polluting prototypes", () => {
+  const submittedState = JSON.parse('{"__proto__":{"polluted":true},"a":1}')
+
+  const result = mergeStates({
+    originalState: { a: 1 },
+    submittedState,
+    currentServerState: { a: 1 },
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(Object.getPrototypeOf(result.value), Object.prototype)
+  assert.ok(Object.prototype.hasOwnProperty.call(result.value, "__proto__"))
+  assert.deepEqual(result.value.__proto__, { polluted: true })
+  assert.equal({}.polluted, undefined)
+})
+
+test("merges additions of different keys on both sides", () => {
+  assert.deepEqual(
+    mergeStates({
+      originalState: {},
+      submittedState: { note: "a" },
+      currentServerState: { tag: "b" },
+    }),
+    { ok: true, value: { note: "a", tag: "b" }, conflicts: [] },
+  )
+})
+
+test("reports both sides adding the same key with different objects at the parent path", () => {
+  assert.deepEqual(
+    mergeStates({
+      originalState: {},
+      submittedState: { addr: { city: "Giza" } },
+      currentServerState: { addr: { street: "Corniche" } },
+    }).conflicts,
+    [
+      {
+        path: ["addr"],
+        submitted: { exists: true, value: { city: "Giza" } },
+        currentServer: { exists: true, value: { street: "Corniche" } },
+      },
+    ],
+  )
+})
+
+test("accepts the same deletion on both sides", () => {
+  assert.deepEqual(
+    mergeStates({
+      originalState: { phone: "111", status: "pending" },
+      submittedState: { status: "pending" },
+      currentServerState: { status: "pending" },
+    }),
+    { ok: true, value: { status: "pending" }, conflicts: [] },
+  )
+})
+
+test("applies a server-only deletion", () => {
+  assert.deepEqual(
+    mergeStates({
+      originalState: { phone: "111", status: "pending" },
+      submittedState: { phone: "111", status: "paid" },
+      currentServerState: { status: "pending" },
+    }),
+    { ok: true, value: { status: "paid" }, conflicts: [] },
+  )
+})
+
+test("reports conflicting type changes atomically", () => {
+  assert.deepEqual(
+    mergeStates({
+      originalState: { value: { a: 1 } },
+      submittedState: { value: "scalar" },
+      currentServerState: { value: [1] },
+    }).conflicts,
+    [
+      {
+        path: ["value"],
+        submitted: { exists: true, value: "scalar" },
+        currentServer: { exists: true, value: [1] },
+      },
+    ],
+  )
+})
+
+test("reports root-level scalar and array conflicts at the empty path", () => {
+  for (const [originalState, submittedState, currentServerState] of [
+    [1, 2, 3],
+    [[1], [2], [3]],
+  ]) {
+    assert.deepEqual(
+      mergeStates({ originalState, submittedState, currentServerState }).conflicts,
+      [
+        {
+          path: [],
+          submitted: { exists: true, value: submittedState },
+          currentServer: { exists: true, value: currentServerState },
+        },
+      ],
+    )
+  }
+})
+
+test("accepts identical array changes on both sides", () => {
+  assert.deepEqual(
+    mergeStates({
+      originalState: { items: [1] },
+      submittedState: { items: [1, 2] },
+      currentServerState: { items: [1, 2] },
+    }),
+    { ok: true, value: { items: [1, 2] }, conflicts: [] },
+  )
+})
