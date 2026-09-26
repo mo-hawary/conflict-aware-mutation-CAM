@@ -1,6 +1,8 @@
 import { CAMConfigError } from "./errors.js"
 import type { ErrorOutput, ErrorSignal, JsonValue } from "./types.js"
 
+const MAX_JSON_DEPTH = 512
+
 const hasOwn = (value: object, key: PropertyKey): boolean =>
   Object.prototype.hasOwnProperty.call(value, key)
 
@@ -26,6 +28,14 @@ export function assertErrorSignal(
     typeof candidate.code !== "number"
   ) {
     throw new CAMConfigError(`${label}.code must be a string or number`)
+  }
+
+  if (
+    hasCode &&
+    typeof candidate.code === "number" &&
+    !Number.isFinite(candidate.code)
+  ) {
+    throw new CAMConfigError(`${label}.code must be a finite number`)
   }
 
   if (hasText && typeof candidate.text !== "string") {
@@ -60,7 +70,13 @@ export function assertJsonValue(
 ): asserts value is JsonValue {
   const seen = new Set<object>()
 
-  const visit = (current: unknown, path: string): void => {
+  const visit = (current: unknown, path: string, depth: number): void => {
+    if (depth > MAX_JSON_DEPTH) {
+      throw new CAMConfigError(
+        `${path} exceeds CAM's maximum JSON nesting depth of ${MAX_JSON_DEPTH}`,
+      )
+    }
+
     if (current === null) return
 
     switch (typeof current) {
@@ -89,24 +105,36 @@ export function assertJsonValue(
     }
 
     const prototype = Object.getPrototypeOf(objectValue)
-    if (!Array.isArray(objectValue) && prototype !== Object.prototype && prototype !== null) {
+    if (
+      !Array.isArray(objectValue) &&
+      prototype !== Object.prototype &&
+      prototype !== null
+    ) {
       throw new CAMConfigError(`${path} must contain only plain objects and arrays`)
+    }
+
+    if (Object.getOwnPropertySymbols(objectValue).length > 0) {
+      throw new CAMConfigError(`${path} must not contain symbol-keyed properties`)
     }
 
     seen.add(objectValue)
 
     if (Array.isArray(objectValue)) {
       for (let index = 0; index < objectValue.length; index += 1) {
-        visit(objectValue[index], `${path}[${index}]`)
+        visit(objectValue[index], `${path}[${index}]`, depth + 1)
       }
     } else {
       for (const key of Object.keys(objectValue)) {
-        visit((objectValue as Record<string, unknown>)[key], `${path}.${key}`)
+        visit(
+          (objectValue as Record<string, unknown>)[key],
+          `${path}.${key}`,
+          depth + 1,
+        )
       }
     }
 
     seen.delete(objectValue)
   }
 
-  visit(value, label)
+  visit(value, label, 0)
 }
