@@ -11,6 +11,7 @@ The core problem is not HTTP transport or UI. The core problem is deterministic 
 - `latest`: newest entity fetched after the failure
 - `error`: actual backend error normalized by the caller
 - `expectedError`: exact conflict matcher declared by the caller
+- optional `errorOutput`: unmatched-error output policy
 
 CAM must only attempt a three-way merge when `error` matches `expectedError`.
 
@@ -19,14 +20,17 @@ CAM must only attempt a three-way merge when `error` matches `expectedError`.
 Target API:
 
 ```ts
-type BackendError = {
-  code?: string | number
-  text?: string
-}
-
-type ExpectedConflictError =
+/** At least one of `code` or `text` is required. Prefer `code`. */
+type ErrorSignal =
   | { code: string | number; text?: string }
   | { code?: never; text: string }
+
+type BackendError = ErrorSignal
+type ExpectedConflictError = ErrorSignal
+
+type ErrorOutput =
+  | "backend"
+  | { text: string }
 
 resolveConflict<T>({
   base,
@@ -34,19 +38,58 @@ resolveConflict<T>({
   latest,
   error,
   expectedError,
+  errorOutput,
 }): Resolution<T>
 ```
 
-### Error matching
+### Error signal invariant
 
 - `error` is required.
-- `error.code` and `error.text` are optional.
+- `error` must contain at least `code` or `text`.
 - `expectedError` is required.
 - `expectedError` must contain at least `code` or exact `text`.
-- Prefer `code`.
+- `{}` and `{ code: undefined, text: undefined }` are invalid public inputs.
+- Prefer `code` because it is stable and machine-readable.
 - `text` is exact-match only in v1.
 - If both expected `code` and `text` are provided, both must match.
 - If the error does not match, do not perform merge work.
+
+### Returned unmatched-error policy
+
+`errorOutput` is optional and defaults to `"backend"`.
+
+```ts
+errorOutput: "backend"
+```
+
+returns the normalized backend error unchanged.
+
+```ts
+errorOutput: { text: "Unable to update this order" }
+```
+
+preserves any backend `code` and overrides only the returned `text`.
+
+Example:
+
+```ts
+error = {
+  code: 500,
+  text: "Internal database exception",
+}
+
+errorOutput = {
+  text: "Unable to update this order",
+}
+
+// returned error
+{
+  code: 500,
+  text: "Unable to update this order",
+}
+```
+
+This policy applies only to `kind: "error"`. It must not rewrite true field conflicts.
 
 Expected non-match result:
 
@@ -54,8 +97,8 @@ Expected non-match result:
 {
   ok: false,
   kind: "error",
-  error,
-  conflicts: []
+  error: BackendError,
+  conflicts: [],
 }
 ```
 
@@ -67,7 +110,7 @@ Success:
 {
   ok: true,
   value: T,
-  conflicts: []
+  conflicts: [],
 }
 ```
 
@@ -184,11 +227,14 @@ Minimum target:
 1. exhaustive unit cases for merge truth table
 2. nested-path tests
 3. deletion/null/missing-value tests
-4. error-matcher tests
-5. property-based tests
-6. fuzz tests for JSON-compatible trees
-7. deterministic-output tests
-8. benchmarks for representative payload sizes
+4. error-signal type/runtime validation tests
+5. error-matcher tests
+6. unmatched-error pass-through tests
+7. custom returned-error-text tests
+8. property-based tests
+9. fuzz tests for JSON-compatible trees
+10. deterministic-output tests
+11. benchmarks for representative payload sizes
 
 Any bug fix should include a regression test.
 
@@ -226,16 +272,17 @@ Avoid expanding scope unless it directly improves the small conflict-aware mutat
 
 Recommended order:
 
-1. types and public contract
+1. `ErrorSignal`, result, and public contract
 2. exact error matcher
-3. scalar three-way merge
-4. recursive object traversal
-5. precise conflict path generation
-6. deletion/null/missing semantics
-7. arrays
-8. adapters
-9. benchmarks
-10. optional WASM prototype
+3. unmatched-error output policy (`backend` or custom text)
+4. scalar three-way merge
+5. recursive object traversal
+6. precise conflict path generation
+7. deletion/null/missing semantics
+8. arrays
+9. adapters
+10. benchmarks
+11. optional WASM prototype
 
 ## Repository discipline
 
@@ -244,5 +291,7 @@ Recommended order:
 - Avoid hidden global state.
 - Avoid mutation of caller inputs.
 - Keep output serializable.
+- Preserve backend `code` when custom error text is requested.
+- Do not let custom error text alter merge-conflict results.
 - Document every semantic choice that could surprise consumers.
 - Do not copy implementation code from competing libraries; implement from the CAM contract and tests.
