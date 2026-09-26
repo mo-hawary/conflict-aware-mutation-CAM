@@ -106,7 +106,7 @@ Unsupported in v1:
 
 For object properties, **property absence represents deletion**. CAM distinguishes a missing property from a property whose value is `null`.
 
-Invalid or unsupported inputs are programmer/configuration errors and should throw `CAMConfigError` or `TypeError`. They are not normal conflict results.
+Invalid or unsupported public inputs are programmer/configuration errors and throw `CAMConfigError`. `TypeError` is reserved for an internal invariant failure, not normal invalid caller input. These are not normal conflict results.
 
 ## Error signals
 
