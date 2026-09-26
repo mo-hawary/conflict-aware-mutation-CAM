@@ -4,20 +4,67 @@
 
 Build CAM as a small, headless, framework-independent conflict-aware mutation library for ordinary CRUD/admin applications.
 
-The core problem is not HTTP transport or UI. The core problem is deterministic recovery after a stale mutation by combining:
+The core problem is deterministic recovery after a stale mutation.
 
-- `base`: entity when editing started
-- `submitted`: entity the user attempted to save
-- `latest`: newest entity fetched after the failure
-- `error`: actual backend error normalized by the caller
-- `expectedError`: exact conflict matcher declared by the caller
-- optional `errorOutput`: unmatched-error output policy
+CAM works with three explicit state snapshots:
 
-CAM must only attempt a three-way merge when `error` matches `expectedError`.
+- `originalState`: server state captured when editing started
+- `submittedState`: state the user attempted to save
+- `currentServerState`: newest server state fetched after a confirmed stale-write conflict
 
-## Non-negotiable v1 contract
+Do not revert these names to `base`, `submitted`, or `latest` in the public API.
 
-Target API:
+## Core architectural rule
+
+**Error matching and three-way merging are separate primitives.**
+
+A caller should be able to check whether a backend error matches the configured conflict condition before fetching `currentServerState`.
+
+Target flow:
+
+```text
+mutation fails
+    -> normalize backend error
+    -> matchConflictError()
+        -> not matched: return/display configured error
+        -> matched: fetch currentServerState
+            -> mergeStates()
+```
+
+A convenience `resolveConflict()` may compose both concerns for callers that already have all inputs, but it must not replace the low-level split primitives.
+
+## v1 data domain
+
+v1 is JSON-compatible only.
+
+```ts
+type JsonPrimitive = string | number | boolean | null
+
+type JsonValue =
+  | JsonPrimitive
+  | JsonValue[]
+  | { [key: string]: JsonValue }
+```
+
+Reject in v1:
+
+- `undefined`
+- `Date`
+- `Map`
+- `Set`
+- `BigInt`
+- functions
+- symbols
+- class instances
+- cyclic references
+- `NaN`
+- `Infinity` / `-Infinity`
+
+Property absence represents deletion. Property absence and `null` are distinct states.
+
+Unsupported values are programmer/config errors, not conflict results.
+
+## Error contract
 
 ```ts
 /** At least one of `code` or `text` is required. Prefer `code`. */
@@ -25,151 +72,185 @@ type ErrorSignal =
   | { code: string | number; text?: string }
   | { code?: never; text: string }
 
-type BackendError = ErrorSignal
-type ExpectedConflictError = ErrorSignal
-
 type ErrorOutput =
   | "backend"
   | { text: string }
+```
 
-resolveConflict<T>({
-  base,
-  submitted,
-  latest,
+Rules:
+
+- `error` must contain at least one of `code` or `text`.
+- `expectedError` must contain at least one of `code` or exact `text`.
+- `{}` and `{ code: undefined, text: undefined }` are invalid.
+- Prefer `code`.
+- `text` matching is exact only in v1.
+- If both expected fields are supplied, both must match.
+- Invalid matcher configuration throws.
+
+### `matchConflictError()`
+
+Target shape:
+
+```ts
+matchConflictError({
   error,
   expectedError,
   errorOutput,
-}): Resolution<T>
+}): ErrorMatchResult
 ```
-
-### Error signal invariant
-
-- `error` is required.
-- `error` must contain at least `code` or `text`.
-- `expectedError` is required.
-- `expectedError` must contain at least `code` or exact `text`.
-- `{}` and `{ code: undefined, text: undefined }` are invalid public inputs.
-- Prefer `code` because it is stable and machine-readable.
-- `text` is exact-match only in v1.
-- If both expected `code` and `text` are provided, both must match.
-- If the error does not match, do not perform merge work.
-
-### Returned unmatched-error policy
-
-`errorOutput` is optional and defaults to `"backend"`.
 
 ```ts
-errorOutput: "backend"
+type ErrorMatchResult =
+  | { matched: true }
+  | {
+      matched: false
+      error: ErrorSignal
+    }
 ```
 
-returns the normalized backend error unchanged.
+`errorOutput` defaults to `"backend"`.
+
+When custom text is configured:
 
 ```ts
 errorOutput: { text: "Unable to update this order" }
 ```
 
-preserves any backend `code` and overrides only the returned `text`.
+preserve the backend code when present and replace only the returned text.
 
-Example:
+## Merge contract
 
-```ts
-error = {
-  code: 500,
-  text: "Internal database exception",
-}
-
-errorOutput = {
-  text: "Unable to update this order",
-}
-
-// returned error
-{
-  code: 500,
-  text: "Unable to update this order",
-}
-```
-
-This policy applies only to `kind: "error"`. It must not rewrite true field conflicts.
-
-Expected non-match result:
+Target primitive:
 
 ```ts
-{
-  ok: false,
-  kind: "error",
-  error: BackendError,
-  conflicts: [],
-}
+mergeStates<T extends JsonValue>({
+  originalState,
+  submittedState,
+  currentServerState,
+}): MergeResult<T>
 ```
 
-## Result model
-
-Success:
+Result:
 
 ```ts
-{
-  ok: true,
-  value: T,
-  conflicts: [],
+type PathSegment = string | number
+
+type Conflict = {
+  path: PathSegment[]
+  submitted: JsonValue
+  currentServer: JsonValue
 }
+
+type MergeResult<T extends JsonValue> =
+  | {
+      ok: true
+      value: T
+      conflicts: []
+    }
+  | {
+      ok: false
+      kind: "conflict"
+      conflicts: Conflict[]
+    }
 ```
 
-True conflict:
+Do **not** expose `value?: T` on a conflict result in v1. An unresolved partial merge must never look persistable.
 
-```ts
-{
-  ok: false,
-  kind: "conflict",
-  conflicts: Conflict[],
-  value?: T,
-}
-```
+`ok` is intentionally familiar to JavaScript developers, but the merge core is not an HTTP `Response`.
 
-`ok` is intentionally familiar to Fetch users, but CAM core is not an HTTP `Response` and must not depend on Fetch.
-
-## Three-way merge semantics
+## Three-way semantics
 
 For each path:
 
 ```text
-submitted == base && latest != base
-=> remote-only change
-=> keep latest
+submittedState == originalState
+currentServerState != originalState
+=> server-only change
+=> keep currentServerState
 
-submitted != base && latest == base
-=> local-only change
-=> keep submitted
+submittedState != originalState
+currentServerState == originalState
+=> submitted-only change
+=> keep submittedState
 
-submitted == latest
+submittedState == currentServerState
 => both agree
 => no conflict
 
-submitted != base && latest != base && submitted != latest
+submittedState != originalState
+currentServerState != originalState
+submittedState != currentServerState
 => true conflict
 ```
 
-## Recursive behavior
+## Recursive objects
 
-Do not treat nested objects as opaque top-level values.
+Nested objects must be traversed recursively.
 
 Example:
 
 ```text
-submitted changes shippingAddress.city
-latest changes shippingAddress.street
+submittedState changes shippingAddress.city
+currentServerState changes shippingAddress.street
 ```
 
-This is not a conflict. CAM should recurse and safely merge both paths.
+This is not a conflict. Merge both safely.
 
-Conflict paths should be precise and deterministic, e.g.:
+## Path representation
 
-```text
-shippingAddress.city
-customer.phone
-items[3].quantity
+Use arrays of path segments:
+
+```ts
+["shippingAddress", "city"]
+["customer", "phone"]
 ```
 
-## Core design constraints
+Do not use dotted strings as the canonical core representation. Real keys may contain dots or brackets.
+
+A formatting helper may later expose JSON Pointer or human-readable strings.
+
+## Arrays in v1
+
+Arrays are atomic values.
+
+Do not implement identity-aware array merging in v1.
+
+Rules:
+
+- only submitted side changes array -> keep submitted array
+- only server side changes array -> keep server array
+- both change to same array -> safe
+- both change differently -> conflict at the array path
+
+Do not recurse into array indexes for merge semantics in v1.
+
+## Deletion/null semantics
+
+For object properties:
+
+- absent key = deletion
+- key with `null` = explicit null
+
+They are different.
+
+`undefined` is invalid input and must not be silently treated as deletion.
+
+## Programmer errors vs domain results
+
+Throw for invalid usage/configuration:
+
+- invalid/empty `ErrorSignal`
+- unsupported value type
+- cycle in state tree
+- `undefined`
+- invalid option value
+- malformed path/config object
+
+Use `CAMConfigError` or `TypeError` consistently.
+
+Return `ok: false, kind: "conflict"` only for valid state inputs with a genuine concurrent path collision.
+
+## Core constraints
 
 The core must remain:
 
@@ -179,80 +260,93 @@ The core must remain:
 - UI-agnostic
 - network-free
 - deterministic
-- JSON-friendly
+- JSON-only in v1
+- immutable with respect to caller inputs
 - zero or minimal runtime dependencies
 
-Do not add React, Vue, Angular, TanStack Query, Axios, Fetch, or DOM dependencies to core.
+Do not add React, Vue, Angular, TanStack Query, Axios, Fetch, DOM, or UI dependencies to core.
 
-Adapters may be added separately later.
+## Convenience API and adapters
 
-## Planned adapters
+Possible public surfaces:
 
-Keep these outside core semantics:
+```ts
+matchConflictError(...)
+mergeStates(...)
+resolveConflict(...) // convenience composition
+resolveOrThrow(...)
+asResponse(...)
+```
 
-- `resolveOrThrow()`
-- `asResponse()`
+`resolveConflict()` should compose existing primitives rather than duplicate semantics.
 
-`resolveOrThrow()` may support mutation libraries that expect return-or-throw behavior.
+`resolveOrThrow()` may support libraries that expect return-or-throw behavior.
 
-`asResponse()` may provide familiar `ok`, `status`, and `json()` ergonomics without changing core results.
-
-## Important v1 edge cases
-
-Before calling v1 stable, define and test:
-
-- nested objects
-- missing property vs deletion
-- `undefined`
-- `null`
-- arrays
-- reordered arrays
-- primitive type changes
-- same change on both sides
-- additions on both sides
-- deletions on one or both sides
-- deep recursion limits
-- prototype-pollution-safe path handling
-- deterministic conflict ordering
-- custom equality hooks, if supported
-
-Do not silently invent array semantics. If identity-aware arrays are not ready, prefer explicit conservative behavior.
+`asResponse()` may provide familiar `ok`, `status`, and `json()` ergonomics without contaminating core merge semantics with HTTP behavior.
 
 ## Testing expectations
 
-Conflict resolution code should be tested more heavily than typical utility code.
+Minimum v1 coverage:
 
-Minimum target:
+1. ErrorSignal validation
+2. exact code matching
+3. exact text matching
+4. combined code+text matching
+5. unmatched error pass-through
+6. custom unmatched-error text
+7. scalar merge truth table
+8. recursive object merge
+9. missing key / deletion semantics
+10. null semantics
+11. atomic arrays
+12. same array on both sides
+13. conflicting arrays
+14. additions on both sides
+15. deletions on one or both sides
+16. keys containing dots/brackets
+17. deterministic path ordering
+18. caller-input immutability
+19. unsupported-type rejection
+20. cyclic-input rejection
+21. property-based tests over JSON trees
+22. fuzz tests
+23. representative benchmarks
 
-1. exhaustive unit cases for merge truth table
-2. nested-path tests
-3. deletion/null/missing-value tests
-4. error-signal type/runtime validation tests
-5. error-matcher tests
-6. unmatched-error pass-through tests
-7. custom returned-error-text tests
-8. property-based tests
-9. fuzz tests for JSON-compatible trees
-10. deterministic-output tests
-11. benchmarks for representative payload sizes
+Every bug fix must include a regression test.
 
-Any bug fix should include a regression test.
+## Security/correctness
+
+- Be prototype-pollution-safe when traversing or constructing objects.
+- Never mutate `originalState`, `submittedState`, or `currentServerState`.
+- Keep output deterministic.
+- Avoid recursion patterns that can trivially exhaust the stack; define a depth strategy before stable release.
 
 ## Performance
 
 Correctness first.
 
-Start in TypeScript.
+Implement TypeScript first.
 
-A Rust -> WebAssembly engine is an experiment, not an architectural requirement. Do not make WASM the default unless end-to-end benchmarks show material wins after initialization and JS/WASM serialization costs.
+Rust -> WebAssembly is optional and experimental. Do not make it default without end-to-end benchmark evidence that includes initialization and JS/WASM serialization overhead.
 
-Benchmark at least:
+## Implementation order
 
-- 1-5 KB
-- 25-100 KB
-- 500 KB+
-- shallow and deeply nested data
-- few and many conflicts
+1. public JSON types
+2. runtime JSON validation
+3. `CAMConfigError`
+4. `ErrorSignal` validation
+5. `matchConflictError()`
+6. scalar merge truth table
+7. recursive object traversal
+8. path arrays
+9. deletion/null semantics
+10. atomic arrays
+11. deterministic ordering
+12. `resolveConflict()` convenience composition
+13. adapters
+14. property/fuzz tests
+15. benchmarks
+16. optional WASM prototype
 
 ## Scope control
 
@@ -261,37 +355,19 @@ CAM is not:
 - a CRDT
 - a realtime sync engine
 - a collaborative editor
-- a Git merge tool
+- a Git merge engine
 - an HTTP client
 - a UI component library
 - a replacement for backend optimistic concurrency control
 
-Avoid expanding scope unless it directly improves the small conflict-aware mutation primitive.
-
-## Implementation order
-
-Recommended order:
-
-1. `ErrorSignal`, result, and public contract
-2. exact error matcher
-3. unmatched-error output policy (`backend` or custom text)
-4. scalar three-way merge
-5. recursive object traversal
-6. precise conflict path generation
-7. deletion/null/missing semantics
-8. arrays
-9. adapters
-10. benchmarks
-11. optional WASM prototype
+Avoid scope expansion unless it directly improves the small conflict-aware mutation primitive.
 
 ## Repository discipline
 
-- Keep public API small.
+- Keep the public API small.
 - Prefer pure functions.
 - Avoid hidden global state.
-- Avoid mutation of caller inputs.
-- Keep output serializable.
-- Preserve backend `code` when custom error text is requested.
-- Do not let custom error text alter merge-conflict results.
+- Preserve caller input immutability.
+- Keep outputs serializable.
 - Document every semantic choice that could surprise consumers.
-- Do not copy implementation code from competing libraries; implement from the CAM contract and tests.
+- Do not copy competitor implementation code. Build from the CAM contract and tests.
