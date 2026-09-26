@@ -4,7 +4,7 @@
 
 It is designed for the common case where a user edits a record, another actor changes that record before the first user saves, and the backend rejects the stale write.
 
-> Status: early design / pre-alpha. This README defines the intended v1 contract before implementation begins.
+> Status: active pre-release implementation. The TypeScript v1 core is implemented on `main`; the package is still private and versioned `0.0.0-development`. `matchConflictError()` and `mergeStates()` are the current public primitives. Convenience adapters, property/fuzz testing, benchmarks, and Rust/WASM work remain roadmap items.
 
 ## The problem
 
@@ -30,6 +30,39 @@ The backend can detect the stale write. The client still needs to answer:
 - Which exact paths require human resolution?
 
 CAM handles the error matching and three-way comparison without owning networking, fetching, retries, or UI.
+
+## Current implementation
+
+The core implementation is now on `main` (merged in PR #2 on September 26, 2026).
+
+Implemented today:
+
+- `CAMConfigError` for configuration/input failures
+- `matchConflictError()` with exact, type-strict matching
+- `mergeStates()` with deterministic three-way merge semantics
+- JSON-only runtime validation with a 512-level nesting limit
+- own-property-only error-signal handling; inherited getters/fields are ignored
+- finite numeric error codes only
+- recursive plain-object merging
+- property absence vs explicit `null`
+- `ConflictValue` wrappers so deletion is representable without ambiguity
+- atomic arrays in v1
+- deterministic sorted object output and conflict ordering
+- signed-zero normalization (`-0` and `0` compare equal)
+- safe handling of keys such as `__proto__`
+- caller-input immutability through cloned output
+- unit, integration, regression, and type-level contract tests
+- CI on Node 24 using `npm ci`, typecheck, build-through-test, and Node's test runner
+
+Current public runtime exports:
+
+```ts
+CAMConfigError
+matchConflictError
+mergeStates
+```
+
+The package is not published yet (`private: true`). `resolveConflict()`, `resolveOrThrow()`, `asResponse()`, property/fuzz suites, representative benchmarks, and any Rust/WASM engine are not part of the current implementation.
 
 ## Naming
 
@@ -186,7 +219,7 @@ const result = mergeStates({
 })
 ```
 
-A convenience `resolveConflict()` may compose error matching and merging for callers that already have all inputs, but the split primitives remain the underlying contract.
+`resolveConflict()` is not part of the current public API. A future convenience composition may wrap error matching and merging for callers that already have all inputs, but the split primitives remain the underlying contract.
 
 ## Merge result
 
@@ -423,9 +456,9 @@ This keeps normal domain control flow separate from API misuse.
 
 ## Drop-in ergonomics
 
-The core remains framework-free.
+The implemented core is framework-free and currently exposes only the matcher and merge primitives.
 
-Planned small adapters may include:
+Future adapters may include:
 
 ```ts
 resolveConflict(...)
@@ -433,9 +466,7 @@ resolveOrThrow(...)
 asResponse(...)
 ```
 
-`resolveOrThrow()` can support mutation libraries that expect return-or-throw behavior.
-
-`asResponse()` can provide Response-like `ok`, `status`, and `json()` ergonomics without putting HTTP semantics into the merge engine itself.
+These are roadmap items, not current exports. They must remain thin adapters over the same matcher/merge semantics.
 
 CAM should work cleanly around:
 
@@ -503,53 +534,80 @@ CAM is not:
 - a UI component library
 - a replacement for backend optimistic concurrency control
 
-## Testing expectations
+## Test coverage
 
-Before v1 release, cover at least:
+The current suite covers the implemented v1 core, including:
 
-1. error-signal validation
-2. exact error matching
-3. custom unmatched-error text
-4. scalar merge truth table
-5. recursive objects
-6. missing property vs deletion
-7. `null`
-8. atomic arrays
-9. same change on both sides
-10. additions on both sides
-11. deletions on one or both sides
-12. deterministic path ordering
-13. object keys containing dots/brackets
-14. unsupported input rejection
-15. cyclic-input rejection
-16. property-based tests
-17. fuzz tests for JSON trees
-18. representative benchmarks
+- error-signal validation and exact matching
+- custom unmatched-error text
+- strict code-type matching and finite numeric codes
+- inherited error fields/getters being ignored
+- scalar merge truth-table behavior
+- recursive object merging
+- additions, deletions, and `null`
+- deletion-vs-change conflicts through `ConflictValue`
+- atomic arrays and identical-array changes
+- root-level and nested conflicts
+- deterministic key/path ordering
+- `-0` vs `0` equality
+- dotted/bracketed object keys
+- `__proto__` safety
+- unsupported values, sparse arrays, cycles, and depth-limit rejection
+- generic `MergeResult<T>` typing and the absence of `value` on conflict results
+- an integration flow that combines error matching with merging
+
+Still planned before a stable v1 release:
+
+1. property-based tests
+2. fuzz tests over JSON trees
+3. representative benchmarks
+4. release/package compatibility validation
 
 Any bug fix should include a regression test.
 
 ## Implementation direction
 
-Start with a TypeScript reference implementation.
+The TypeScript reference implementation is now the source of truth for v1 semantics.
 
-A Rust -> WebAssembly engine is an experiment, not a requirement. Only promote it if end-to-end benchmarks show a material win after initialization and JS/WASM serialization costs.
+A Rust -> WebAssembly engine remains an experiment, not a requirement. Only promote it if end-to-end benchmarks show a material win after initialization and JS/WASM serialization costs.
 
-## Recommended implementation order
+## Current roadmap
+
+Completed on `main`:
 
 1. JSON value types and runtime validation
-2. `ErrorSignal` validation
+2. `ErrorSignal` validation and normalization
 3. `matchConflictError()`
-4. scalar merge truth table
+4. scalar three-way truth table
 5. recursive object traversal
 6. path-array generation
 7. deletion and `null` semantics
 8. atomic arrays
-9. deterministic ordering
-10. convenience `resolveConflict()`
-11. adapters
-12. property/fuzz tests
-13. benchmarks
-14. optional WASM prototype
+9. deterministic ordering and cloned output
+10. regression, integration, and type-contract coverage
+11. reproducible CI with lockfile installs
+
+Next:
+
+1. decide public package/release shape and versioning
+2. add an optional convenience `resolveConflict()` only if it improves integration ergonomics
+3. add thin adapters such as `resolveOrThrow()` / `asResponse()` if justified by real consumers
+4. add property-based and fuzz testing
+5. benchmark realistic payloads and conflict shapes
+6. prototype Rust/WASM only if benchmarks justify the extra boundary and serialization cost
+
+## Development
+
+The repository currently targets Node 24 in CI.
+
+```bash
+npm ci
+npm run typecheck
+npm test
+npm run build
+```
+
+`npm test` builds `dist/`, typechecks the test fixtures, and runs the Node test suite.
 
 ## Why CAM?
 
