@@ -15,8 +15,25 @@ function sameText(actual: ErrorSignal, expected: ErrorSignal): boolean {
   return "text" in actual && actual.text === expected.text
 }
 
-function withOutput(error: ErrorSignal, output: MatchConflictErrorInput["errorOutput"]): ErrorSignal {
-  if (output === undefined || output === "backend") return error
+function cloneErrorSignal(error: ErrorSignal): ErrorSignal {
+  if ("code" in error && error.code !== undefined) {
+    if ("text" in error && error.text !== undefined) {
+      return { code: error.code, text: error.text }
+    }
+
+    return { code: error.code }
+  }
+
+  return { text: error.text }
+}
+
+function withOutput(
+  error: ErrorSignal,
+  output: MatchConflictErrorInput["errorOutput"],
+): ErrorSignal {
+  if (output === undefined || output === "backend") {
+    return cloneErrorSignal(error)
+  }
 
   if ("code" in error && error.code !== undefined) {
     return { code: error.code, text: output.text }
@@ -25,12 +42,17 @@ function withOutput(error: ErrorSignal, output: MatchConflictErrorInput["errorOu
   return { text: output.text }
 }
 
-export function matchConflictError(input: MatchConflictErrorInput): ErrorMatchResult {
+export function matchConflictError(
+  input: MatchConflictErrorInput,
+): ErrorMatchResult {
   assertErrorSignal(input.error, "error")
   assertErrorSignal(input.expectedError, "expectedError")
   assertErrorOutput(input.errorOutput)
 
-  if (sameCode(input.error, input.expectedError) && sameText(input.error, input.expectedError)) {
+  if (
+    sameCode(input.error, input.expectedError) &&
+    sameText(input.error, input.expectedError)
+  ) {
     return { matched: true }
   }
 
