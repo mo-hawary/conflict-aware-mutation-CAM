@@ -4,13 +4,14 @@
 
 It is designed for the common case where a user edits a record, another actor changes the same record before the first user saves, and the backend rejects the stale write.
 
-CAM works from five explicit inputs:
+CAM works from five required inputs plus one optional error-output setting:
 
 - `base`: the entity when editing started
 - `submitted`: the state the user attempted to save
 - `latest`: the newest state fetched from the server
-- `error`: the actual backend error for the failed mutation
-- `expectedError`: the exact conflict error CAM is allowed to handle
+- `error`: the actual backend error for the failed mutation; it must contain at least `code` or `text`
+- `expectedError`: the exact conflict error CAM is allowed to handle; it must contain at least `code` or `text`
+- `errorOutput`: optional behavior for unmatched backend errors; defaults to returning the backend error as-is
 
 CAM first verifies that the actual backend error matches the caller-declared conflict error. Only then does it perform the three-way comparison.
 
@@ -45,14 +46,20 @@ CAM solves that detection + comparison problem without owning your API client, f
 ## Intended API
 
 ```ts
-type BackendError = {
-  code?: string | number
-  text?: string
-}
-
-type ExpectedConflictError =
+/**
+ * At least one of `code` or `text` is required.
+ * Prefer `code` when the backend exposes a stable machine-readable value.
+ */
+type ErrorSignal =
   | { code: string | number; text?: string }
   | { code?: never; text: string }
+
+type BackendError = ErrorSignal
+type ExpectedConflictError = ErrorSignal
+
+type ErrorOutput =
+  | "backend"
+  | { text: string }
 
 const result = resolveConflict({
   base,
@@ -60,38 +67,94 @@ const result = resolveConflict({
   latest,
   error,
   expectedError,
+  errorOutput, // optional; defaults to "backend"
 })
+```
+
+This type intentionally prevents both `code` and `text` from being absent.
+
+Valid:
+
+```ts
+{ code: 409 }
+{ code: "STALE_ORDER" }
+{ text: "Order was modified by another user" }
+{ code: 409, text: "Order was modified by another user" }
+```
+
+Invalid:
+
+```ts
+{}
+{ code: undefined, text: undefined }
 ```
 
 ### Error matching
 
-`error` is required. Its `code` and `text` fields are individually optional because backend error shapes vary.
+`error` is required and must contain at least one of `code` or `text`.
 
-`expectedError` is also required and must contain at least one exact matcher:
+`expectedError` is also required and must contain at least one exact matcher.
+
+Prefer `code`. It is stable and machine-readable.
 
 ```ts
-{ code: 409 }
+expectedError: { code: 409 }
 ```
 
 or:
 
 ```ts
-{ code: "STALE_ORDER" }
+expectedError: { code: "STALE_ORDER" }
 ```
 
-or, when no stable code exists:
+When no stable code exists, exact text matching is available:
 
 ```ts
-{ text: "Order was modified by another user" }
+expectedError: { text: "Order was modified by another user" }
 ```
-
-Prefer `code`. It is stable and machine-readable.
 
 `text` is an exact-match fallback in v1. No substring, regex, or fuzzy matching.
 
 If both `code` and `text` are provided, all supplied fields must match.
 
 If the actual error does **not** match `expectedError`, CAM does not perform the merge.
+
+### Returned error behavior
+
+By default, CAM forwards the normalized backend error unchanged for `kind: "error"` results:
+
+```ts
+errorOutput: "backend"
+```
+
+This is also the default when `errorOutput` is omitted.
+
+A caller may instead override the text CAM returns:
+
+```ts
+errorOutput: {
+  text: "Unable to update this order"
+}
+```
+
+If the backend error contains a `code`, CAM preserves it and replaces only the returned `text`:
+
+```ts
+// input error
+{
+  code: 500,
+  text: "Internal database exception"
+}
+
+// with errorOutput: { text: "Unable to update this order" }
+// returned error
+{
+  code: 500,
+  text: "Unable to update this order"
+}
+```
+
+`errorOutput` only affects `kind: "error"` results. It does not rewrite field conflicts.
 
 ## Result shape
 
@@ -130,7 +193,7 @@ True conflict:
 }
 ```
 
-Non-matching backend error:
+Non-matching backend error with default pass-through:
 
 ```ts
 {
@@ -139,6 +202,20 @@ Non-matching backend error:
   error: {
     code: 500,
     text: "Internal server error"
+  },
+  conflicts: []
+}
+```
+
+Non-matching backend error with custom returned text:
+
+```ts
+{
+  ok: false,
+  kind: "error",
+  error: {
+    code: 500,
+    text: "Unable to update this order"
   },
   conflicts: []
 }
@@ -215,10 +292,14 @@ and merge both safely.
 try {
   await updateOrder(submitted)
 } catch (rawError) {
-  const error = {
-    code: rawError.code ?? rawError.status,
-    text: rawError.message,
-  }
+  const error: BackendError = rawError.code ?? rawError.status
+    ? {
+        code: rawError.code ?? rawError.status,
+        text: rawError.message,
+      }
+    : {
+        text: rawError.message ?? "Unknown backend error",
+      }
 
   const latest = await fetchOrder(submitted.id)
 
@@ -228,6 +309,9 @@ try {
     latest,
     error,
     expectedError: { code: 409 },
+    errorOutput: {
+      text: "Unable to update this order",
+    },
   })
 
   if (result.ok) {
@@ -236,14 +320,15 @@ try {
   }
 
   if (result.kind === "error") {
-    throw rawError
+    showError(result.error)
+    return
   }
 
   showConflictUI(result.conflicts)
 }
 ```
 
-The caller decides how to normalize its backend error into `{ code?, text? }`. CAM never guesses backend semantics.
+The caller decides how to normalize its backend error into the `ErrorSignal` shape. CAM never guesses backend semantics.
 
 ## Drop-in ergonomics
 
@@ -279,8 +364,9 @@ without taking a runtime dependency on any of them.
 ### Your application owns
 
 - making the backend/API call
-- capturing and normalizing the actual backend error
+- capturing and normalizing the actual backend error into an `ErrorSignal`
 - declaring the exact expected conflict error for that mutation
+- optionally choosing backend pass-through or custom returned error text
 - fetching the latest record
 - retrying or resubmitting mutations
 - user interface and design system
@@ -288,7 +374,9 @@ without taking a runtime dependency on any of them.
 
 ### CAM owns
 
+- validating that `error` and `expectedError` each contain at least one usable signal
 - exact conflict-error matching before merge work begins
+- applying the caller-selected unmatched-error output policy
 - recursive comparison
 - nested path tracking
 - three-way merge semantics
@@ -302,6 +390,8 @@ without taking a runtime dependency on any of them.
 - zero UI assumptions
 - backend-agnostic
 - explicit error matching, never inferred conflict semantics
+- type-safe requirement that error signals contain `code` or `text`
+- configurable unmatched-error pass-through or returned text
 - familiar `ok` result convention
 - recursive nested-path detection
 - unresolved-by-default true conflicts
@@ -358,7 +448,8 @@ Before the first stable release, CAM needs explicit semantics for:
 ## Roadmap
 
 - [ ] lock the v1 data model and semantics
-- [ ] implement exact `error` / `expectedError` matching
+- [ ] implement `ErrorSignal` validation and exact `error` / `expectedError` matching
+- [ ] implement configurable unmatched-error output (`backend` or custom text)
 - [ ] implement the TypeScript reference engine
 - [ ] recursive object merge
 - [ ] precise conflict paths
