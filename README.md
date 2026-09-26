@@ -1,25 +1,14 @@
 # CAM
 
-**Conflict-Aware Mutation** is a headless three-way conflict resolver for CRUD mutations.
+**Conflict-Aware Mutation** is a small, headless three-way conflict resolver for CRUD mutations.
 
-It is designed for the common case where a user edits a record, another actor changes the same record before the first user saves, and the backend rejects the stale write.
+It is designed for the common case where a user edits a record, another actor changes that record before the first user saves, and the backend rejects the stale write.
 
-CAM works from five required inputs plus one optional error-output setting:
-
-- `base`: the entity when editing started
-- `submitted`: the state the user attempted to save
-- `latest`: the newest state fetched from the server
-- `error`: the actual backend error for the failed mutation; it must contain at least `code` or `text`
-- `expectedError`: the exact conflict error CAM is allowed to handle; it must contain at least `code` or `text`
-- `errorOutput`: optional behavior for unmatched backend errors; defaults to returning the backend error as-is
-
-CAM first verifies that the actual backend error matches the caller-declared conflict error. Only then does it perform the three-way comparison.
-
-> Status: early design / pre-alpha. The API below describes the intended v1 contract and may change before the first release.
+> Status: early design / pre-alpha. This README defines the intended v1 contract before implementation begins.
 
 ## The problem
 
-Imagine two admins editing the same order.
+Imagine two admins editing the same order:
 
 ```text
 Admin A loads order v7
@@ -32,18 +21,59 @@ Admin B saves first -> order v8
 Admin A tries to save v7 -> stale write rejected
 ```
 
-The backend can detect that the write is stale, but the client still needs to answer:
+The backend can detect the stale write. The client still needs to answer:
 
-- Is this failure actually the conflict case CAM is supposed to handle?
-- What changed locally?
-- What changed remotely?
+- Is this actually the conflict error CAM is supposed to handle?
+- What changed in the user's submitted state?
+- What changed on the server?
 - Can the changes be merged safely?
-- Did both sides edit the same nested field differently?
-- What exact conflicts should the UI show to the user?
+- Which exact paths require human resolution?
 
-CAM solves that detection + comparison problem without owning your API client, framework, or UI.
+CAM handles the error matching and three-way comparison without owning networking, fetching, retries, or UI.
 
-## Intended API
+## Naming
+
+CAM uses explicit state names at call sites:
+
+- `originalState`: the server entity captured when editing started
+- `submittedState`: the state the user attempted to save
+- `currentServerState`: the newest server entity fetched after the stale-write failure
+
+The names are intentionally descriptive. `originalState` is the common ancestor used to determine which side changed each path.
+
+## v1 input domain
+
+CAM v1 accepts **JSON-compatible values only**:
+
+```ts
+type JsonPrimitive = string | number | boolean | null
+
+type JsonValue =
+  | JsonPrimitive
+  | JsonValue[]
+  | { [key: string]: JsonValue }
+```
+
+Unsupported in v1:
+
+- `undefined`
+- `Date`
+- `Map`
+- `Set`
+- `BigInt`
+- functions
+- symbols
+- class instances
+- cyclic references
+- non-finite numbers such as `NaN` and `Infinity`
+
+For object properties, **property absence represents deletion**. CAM distinguishes a missing property from a property whose value is `null`.
+
+Invalid or unsupported inputs are programmer/configuration errors and should throw `CAMConfigError` or `TypeError`. They are not normal conflict results.
+
+## Error signals
+
+CAM never guesses whether an arbitrary backend failure is a concurrency conflict.
 
 ```ts
 /**
@@ -54,26 +84,12 @@ type ErrorSignal =
   | { code: string | number; text?: string }
   | { code?: never; text: string }
 
-type BackendError = ErrorSignal
-type ExpectedConflictError = ErrorSignal
-
 type ErrorOutput =
   | "backend"
   | { text: string }
-
-const result = resolveConflict({
-  base,
-  submitted,
-  latest,
-  error,
-  expectedError,
-  errorOutput, // optional; defaults to "backend"
-})
 ```
 
-This type intentionally prevents both `code` and `text` from being absent.
-
-Valid:
+Valid signals:
 
 ```ts
 { code: 409 }
@@ -89,47 +105,50 @@ Invalid:
 { code: undefined, text: undefined }
 ```
 
-### Error matching
+Matching rules:
 
-`error` is required and must contain at least one of `code` or `text`.
+- `error` and `expectedError` must each contain at least `code` or `text`.
+- Prefer `code` because it is stable and machine-readable.
+- `text` is exact-match only in v1.
+- No substring, regex, or fuzzy matching in v1.
+- If both expected `code` and `text` are provided, both must match.
 
-`expectedError` is also required and must contain at least one exact matcher.
+## Split error matching from merging
 
-Prefer `code`. It is stable and machine-readable.
+Error detection and merge calculation are separate primitives.
 
-```ts
-expectedError: { code: 409 }
-```
+This matters because the caller should not fetch `currentServerState` until CAM has confirmed that the backend error is actually the expected conflict.
 
-or:
-
-```ts
-expectedError: { code: "STALE_ORDER" }
-```
-
-When no stable code exists, exact text matching is available:
+### 1. Match the backend error
 
 ```ts
-expectedError: { text: "Order was modified by another user" }
+const match = matchConflictError({
+  error,
+  expectedError: { code: 409 },
+  errorOutput: "backend",
+})
 ```
 
-`text` is an exact-match fallback in v1. No substring, regex, or fuzzy matching.
+Result:
 
-If both `code` and `text` are provided, all supplied fields must match.
+```ts
+type ErrorMatchResult =
+  | { matched: true }
+  | {
+      matched: false
+      error: ErrorSignal
+    }
+```
 
-If the actual error does **not** match `expectedError`, CAM does not perform the merge.
-
-### Returned error behavior
-
-By default, CAM forwards the normalized backend error unchanged for `kind: "error"` results:
+`errorOutput` is optional and defaults to `"backend"`.
 
 ```ts
 errorOutput: "backend"
 ```
 
-This is also the default when `errorOutput` is omitted.
+returns the normalized backend error unchanged when it does not match.
 
-A caller may instead override the text CAM returns:
+A caller can instead override the returned text:
 
 ```ts
 errorOutput: {
@@ -137,162 +156,173 @@ errorOutput: {
 }
 ```
 
-If the backend error contains a `code`, CAM preserves it and replaces only the returned `text`:
+If the backend error has a `code`, CAM preserves it and replaces only the returned `text`.
+
+### 2. Fetch only after a match
 
 ```ts
-// input error
-{
-  code: 500,
-  text: "Internal database exception"
+if (!match.matched) {
+  showError(match.error)
+  return
 }
 
-// with errorOutput: { text: "Unable to update this order" }
-// returned error
-{
-  code: 500,
-  text: "Unable to update this order"
-}
+const currentServerState = await fetchOrder(submittedState.id)
 ```
 
-`errorOutput` only affects `kind: "error"` results. It does not rewrite field conflicts.
-
-## Result shape
-
-CAM intentionally uses `ok` because it is familiar to JavaScript developers.
-
-It does not pretend to be an HTTP `Response`; it simply follows the same ergonomic convention.
-
-Successful resolution:
+### 3. Run the three-way merge
 
 ```ts
-{
-  ok: true,
-  value: {
-    // same domain shape as the input entity
-  },
-  conflicts: []
-}
+const result = mergeStates({
+  originalState,
+  submittedState,
+  currentServerState,
+})
 ```
 
-True conflict:
+A convenience `resolveConflict()` may compose error matching and merging for callers that already have all inputs, but the split primitives remain the underlying contract.
+
+## Merge result
 
 ```ts
-{
-  ok: false,
-  kind: "conflict",
-  conflicts: [
-    {
-      path: "shippingAddress.city",
-      local: "Giza",
-      remote: "Alexandria"
+type PathSegment = string | number
+
+type Conflict = {
+  path: PathSegment[]
+  submitted: JsonValue
+  currentServer: JsonValue
+}
+
+type MergeResult<T extends JsonValue> =
+  | {
+      ok: true
+      value: T
+      conflicts: []
     }
-  ],
-  value: {
-    // optional safely merged non-conflicting parts
-  }
-}
+  | {
+      ok: false
+      kind: "conflict"
+      conflicts: Conflict[]
+    }
 ```
 
-Non-matching backend error with default pass-through:
+There is deliberately **no partially merged `value` on a conflict result in v1**. A caller should never be able to accidentally persist an unresolved draft as if it were safe.
+
+`ok` intentionally follows the familiar JavaScript/Fetch convention without making CAM an HTTP abstraction.
+
+## Conflict paths
+
+CAM v1 uses path arrays instead of dotted strings:
 
 ```ts
-{
-  ok: false,
-  kind: "error",
-  error: {
-    code: 500,
-    text: "Internal server error"
-  },
-  conflicts: []
-}
+["shippingAddress", "city"]
+["customer", "phone"]
 ```
 
-Non-matching backend error with custom returned text:
+This avoids ambiguity for real object keys that contain dots, brackets, or other punctuation.
 
-```ts
-{
-  ok: false,
-  kind: "error",
-  error: {
-    code: 500,
-    text: "Unable to update this order"
-  },
-  conflicts: []
-}
-```
-
-The caller already owns `base`, `submitted`, and `latest`, so CAM does not echo those full objects back.
+A formatter can later convert paths to JSON Pointer or human-readable strings for display, but the core representation stays unambiguous.
 
 ## Three-way merge rules
 
-For each value or nested path:
+For each object path:
 
 ```text
-submitted == base && latest != base
--> only the remote side changed
--> keep latest
+submittedState == originalState
+currentServerState != originalState
+-> server-only change
+-> keep currentServerState
 
-submitted != base && latest == base
--> only the local side changed
--> keep submitted
+submittedState != originalState
+currentServerState == originalState
+-> submitted-only change
+-> keep submittedState
 
-submitted == latest
+submittedState == currentServerState
 -> both sides agree
 -> no conflict
 
-submitted != base && latest != base && submitted != latest
+submittedState != originalState
+currentServerState != originalState
+submittedState != currentServerState
 -> true conflict
 ```
 
-All three entity inputs are required. Comparing only `submitted` and `latest` cannot reliably distinguish a remote-only change from a true collision.
+This is why all three states are required. Comparing only `submittedState` and `currentServerState` cannot distinguish a server-only update from a true collision.
 
-## Recursive conflict detection
+## Recursive object behavior
 
-CAM is intended to resolve nested structures by path instead of treating each top-level object as one opaque value.
-
-For example:
+Nested objects are resolved by path, not treated as opaque top-level values.
 
 ```ts
-base = {
+const originalState = {
   shippingAddress: {
     city: "Cairo",
-    street: "Tahrir"
-  }
+    street: "Tahrir",
+  },
 }
 
-submitted = {
+const submittedState = {
   shippingAddress: {
     city: "Giza",
-    street: "Tahrir"
-  }
+    street: "Tahrir",
+  },
 }
 
-latest = {
+const currentServerState = {
   shippingAddress: {
     city: "Cairo",
-    street: "Corniche"
-  }
+    street: "Corniche",
+  },
 }
 ```
 
-These edits do not actually conflict.
-
-A shallow resolver may report `shippingAddress` as one conflict. CAM should instead understand:
+These changes do not conflict:
 
 ```text
-shippingAddress.city   -> changed locally only
-shippingAddress.street -> changed remotely only
+["shippingAddress", "city"]   -> submitted-only
+["shippingAddress", "street"] -> server-only
 ```
 
-and merge both safely.
+CAM should safely merge both.
+
+## Arrays in v1
+
+Arrays are **atomic values in v1**.
+
+CAM does not attempt identity-aware item merging or reorder reconciliation.
+
+Rules:
+
+- one side changes the array and the other does not -> keep the changed array
+- both sides produce the same changed array -> safe
+- both sides change the same array differently -> conflict at the array path
+
+Example conflict path:
+
+```ts
+["items"]
+```
+
+Identity-aware arrays can be added later behind explicit configuration without changing the conservative v1 behavior.
+
+## Deletion and null
+
+For object properties:
+
+- key present with `null` -> explicit `null`
+- key absent -> deletion
+
+These are not equivalent.
+
+`undefined` is outside the v1 data model and should be rejected rather than silently converted into deletion.
 
 ## Example integration
 
 ```ts
 try {
-  await updateOrder(submitted)
+  await updateOrder(submittedState)
 } catch (rawError) {
-  const error: BackendError = rawError.code ?? rawError.status
+  const error: ErrorSignal = rawError.code ?? rawError.status
     ? {
         code: rawError.code ?? rawError.status,
         text: rawError.message,
@@ -301,12 +331,7 @@ try {
         text: rawError.message ?? "Unknown backend error",
       }
 
-  const latest = await fetchOrder(submitted.id)
-
-  const result = resolveConflict({
-    base,
-    submitted,
-    latest,
+  const match = matchConflictError({
     error,
     expectedError: { code: 409 },
     errorOutput: {
@@ -314,13 +339,21 @@ try {
     },
   })
 
-  if (result.ok) {
-    await updateOrder(result.value)
+  if (!match.matched) {
+    showError(match.error)
     return
   }
 
-  if (result.kind === "error") {
-    showError(result.error)
+  const currentServerState = await fetchOrder(submittedState.id)
+
+  const result = mergeStates({
+    originalState,
+    submittedState,
+    currentServerState,
+  })
+
+  if (result.ok) {
+    await updateOrder(result.value)
     return
   }
 
@@ -328,13 +361,29 @@ try {
 }
 ```
 
-The caller decides how to normalize its backend error into the `ErrorSignal` shape. CAM never guesses backend semantics.
+The caller owns backend error normalization, fetching, retrying, and UI. CAM owns exact error matching and deterministic merge semantics.
+
+## Programmer errors vs domain results
+
+CAM distinguishes invalid usage from real application conflicts.
+
+Throw for programmer/configuration errors such as:
+
+- empty `ErrorSignal`
+- unsupported state value types
+- cyclic input
+- `undefined` inside the state tree
+- invalid options
+
+Return `{ ok: false, kind: "conflict" }` only for valid inputs where both sides genuinely changed the same path differently.
+
+This keeps normal domain control flow separate from API misuse.
 
 ## Drop-in ergonomics
 
-The core stays framework-free, but tiny adapters can make CAM fit existing code styles.
+The core remains framework-free.
 
-Planned adapters:
+Planned small adapters may include:
 
 ```ts
 resolveConflict(...)
@@ -342,11 +391,11 @@ resolveOrThrow(...)
 asResponse(...)
 ```
 
-`resolveOrThrow()` can return the merged value when `ok === true` and throw a typed `CAMConflictError` otherwise.
+`resolveOrThrow()` can support mutation libraries that expect return-or-throw behavior.
 
-`asResponse()` can expose a Response-like adapter with familiar `ok`, `status`, and `json()` semantics without putting fake HTTP concerns into the core engine.
+`asResponse()` can provide Response-like `ok`, `status`, and `json()` ergonomics without putting HTTP semantics into the merge engine itself.
 
-This keeps CAM easy to use with:
+CAM should work cleanly around:
 
 - plain `fetch()`
 - TanStack Query
@@ -357,29 +406,29 @@ This keeps CAM easy to use with:
 - Node.js
 - Web Workers
 
-without taking a runtime dependency on any of them.
+with no runtime dependency on any of them.
 
 ## Separation of concerns
 
-### Your application owns
+### Application owns
 
 - making the backend/API call
-- capturing and normalizing the actual backend error into an `ErrorSignal`
-- declaring the exact expected conflict error for that mutation
-- optionally choosing backend pass-through or custom returned error text
-- fetching the latest record
-- retrying or resubmitting mutations
-- user interface and design system
-- deciding how the user resolves a reported conflict
+- normalizing the backend error into `ErrorSignal`
+- declaring the expected conflict error
+- choosing backend pass-through or custom unmatched-error text
+- fetching `currentServerState` after the conflict match succeeds
+- retry/resubmit behavior
+- UI and user decisions
 
 ### CAM owns
 
-- validating that `error` and `expectedError` each contain at least one usable signal
-- exact conflict-error matching before merge work begins
-- applying the caller-selected unmatched-error output policy
-- recursive comparison
-- nested path tracking
+- validating public inputs
+- exact error matching
+- unmatched-error output policy
+- recursive object comparison
+- path tracking
 - three-way merge semantics
+- atomic-array behavior
 - safe auto-merge
 - true-conflict detection
 - deterministic serializable output
@@ -387,87 +436,81 @@ without taking a runtime dependency on any of them.
 ## Design goals
 
 - framework-independent
-- zero UI assumptions
 - backend-agnostic
-- explicit error matching, never inferred conflict semantics
-- type-safe requirement that error signals contain `code` or `text`
-- configurable unmatched-error pass-through or returned text
-- familiar `ok` result convention
-- recursive nested-path detection
-- unresolved-by-default true conflicts
+- UI-agnostic
+- network-free core
+- JSON-compatible v1 data model
+- explicit conflict matching
+- unambiguous path representation
+- conservative array semantics
+- no unresolved partial value exposed as safe data
 - deterministic output
-- JSON-friendly data model
-- strong handling of missing values, deletion, and `null`
+- no mutation of caller inputs
 - zero or minimal runtime dependencies
-- extensive unit, property-based, and fuzz testing
+- exhaustive tests around semantics
 
 ## Non-goals
 
-CAM is not intended to be:
+CAM is not:
 
-- a CRDT implementation
+- a CRDT
 - a collaborative editor
 - a realtime sync service
 - a Git merge engine
-- a React modal
 - an HTTP client
+- a UI component library
 - a replacement for backend optimistic concurrency control
 
-The backend remains responsible for detecting stale writes. CAM verifies the caller-declared conflict error and helps the application recover after that failure.
+## Testing expectations
+
+Before v1 release, cover at least:
+
+1. error-signal validation
+2. exact error matching
+3. custom unmatched-error text
+4. scalar merge truth table
+5. recursive objects
+6. missing property vs deletion
+7. `null`
+8. atomic arrays
+9. same change on both sides
+10. additions on both sides
+11. deletions on one or both sides
+12. deterministic path ordering
+13. object keys containing dots/brackets
+14. unsupported input rejection
+15. cyclic-input rejection
+16. property-based tests
+17. fuzz tests for JSON trees
+18. representative benchmarks
+
+Any bug fix should include a regression test.
 
 ## Implementation direction
 
-The first reference implementation should be TypeScript for portability and ecosystem fit.
+Start with a TypeScript reference implementation.
 
-A Rust implementation compiled to WebAssembly may be explored later behind the same public contract. WASM will only become a default engine if benchmarks show a meaningful end-to-end advantage after JS/WASM boundary and serialization costs are included.
+A Rust -> WebAssembly engine is an experiment, not a requirement. Only promote it if end-to-end benchmarks show a material win after initialization and JS/WASM serialization costs.
 
-Representative benchmarks should cover:
+## Recommended implementation order
 
-- small entities: 1 to 5 KB
-- medium entities: 25 to 100 KB
-- large nested entities: 500 KB+
-- deeply nested objects
-- arrays
-- zero-conflict and high-conflict cases
-- cold and warm WASM execution separately
-
-## v1 questions
-
-Before the first stable release, CAM needs explicit semantics for:
-
-- arrays: atomic vs identity-aware merging
-- missing property vs `undefined` vs deleted property
-- `null`
-- reordered lists
-- custom equality for domain values
-- recursion depth safeguards
-- prototype-pollution-safe path handling
-- deterministic conflict ordering
-- how `value` behaves when `kind === "conflict"`
-
-## Roadmap
-
-- [ ] lock the v1 data model and semantics
-- [ ] implement `ErrorSignal` validation and exact `error` / `expectedError` matching
-- [ ] implement configurable unmatched-error output (`backend` or custom text)
-- [ ] implement the TypeScript reference engine
-- [ ] recursive object merge
-- [ ] precise conflict paths
-- [ ] deletion and `null` semantics
-- [ ] array strategy
-- [ ] `resolveOrThrow()` adapter
-- [ ] `asResponse()` adapter
-- [ ] exhaustive unit tests
-- [ ] property-based tests
-- [ ] fuzz tests
-- [ ] benchmarks
-- [ ] publish first npm release
-- [ ] evaluate Rust + WebAssembly engine
+1. JSON value types and runtime validation
+2. `ErrorSignal` validation
+3. `matchConflictError()`
+4. scalar merge truth table
+5. recursive object traversal
+6. path-array generation
+7. deletion and `null` semantics
+8. atomic arrays
+9. deterministic ordering
+10. convenience `resolveConflict()`
+11. adapters
+12. property/fuzz tests
+13. benchmarks
+14. optional WASM prototype
 
 ## Why CAM?
 
-The project is intentionally small.
+The goal is intentionally narrow:
 
-The goal is not to create another frontend framework. The goal is to provide one reliable primitive for a problem that many multi-user CRUD applications eventually hit:
-
-> This record changed while you were editing it. Is this the conflict we expected, which changes are safe, and which fields truly need human resolution?
+> This record changed while you were editing it. Is this the conflict we expected, which changes can be merged safely, and which exact paths need human resolution?
