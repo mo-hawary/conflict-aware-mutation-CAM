@@ -17,13 +17,17 @@ export type ErrorMatchResult =
 
 export type PathSegment = string | number
 
+export type ConflictValue =
+  | { exists: false }
+  | { exists: true; value: JsonValue }
+
 export type Conflict = {
   path: PathSegment[]
-  submitted: JsonValue
-  currentServer: JsonValue
+  submitted: ConflictValue
+  currentServer: ConflictValue
 }
 
-export type MergeResult<T extends JsonValue> =
+export type MergeResult<T extends JsonValue = JsonValue> =
   | {
       ok: true
       value: T
@@ -41,7 +45,7 @@ export type MatchConflictErrorInput = {
   errorOutput?: ErrorOutput
 }
 
-export type MergeStatesInput<T extends JsonValue> = {
+export type MergeStatesInput<T extends JsonValue = JsonValue> = {
   originalState: T
   submittedState: T
   currentServerState: T

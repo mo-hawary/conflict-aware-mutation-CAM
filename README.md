@@ -65,7 +65,11 @@ Unsupported in v1:
 - symbols
 - class instances
 - cyclic references
+- symbol-keyed properties
 - non-finite numbers such as `NaN` and `Infinity`
+- nesting deeper than 512 levels
+
+`-0` and `0` are treated as equal, matching their JSON serialization.
 
 For object properties, **property absence represents deletion**. CAM distinguishes a missing property from a property whose value is `null`.
 
@@ -112,6 +116,9 @@ Matching rules:
 - `text` is exact-match only in v1.
 - No substring, regex, or fuzzy matching in v1.
 - If both expected `code` and `text` are provided, both must match.
+- `code` matching is strict: `409` does not match `"409"`.
+- Only **own** `code` and `text` properties are read. Inherited fields, including prototype getters on class instances, are ignored. Normalize backend errors into plain objects before matching.
+- Numeric codes must be finite.
 
 ## Split error matching from merging
 
@@ -186,10 +193,15 @@ A convenience `resolveConflict()` may compose error matching and merging for cal
 ```ts
 type PathSegment = string | number
 
+/** `exists: false` means the property is absent (deleted) on that side. */
+type ConflictValue =
+  | { exists: false }
+  | { exists: true; value: JsonValue }
+
 type Conflict = {
   path: PathSegment[]
-  submitted: JsonValue
-  currentServer: JsonValue
+  submitted: ConflictValue
+  currentServer: ConflictValue
 }
 
 type MergeResult<T extends JsonValue> =
@@ -206,6 +218,30 @@ type MergeResult<T extends JsonValue> =
 ```
 
 There is deliberately **no partially merged `value` on a conflict result in v1**. A caller should never be able to accidentally persist an unresolved draft as if it were safe.
+
+Each side of a conflict is wrapped in a `ConflictValue`, because a raw `JsonValue` cannot tell a deleted property apart from one set to `null`:
+
+```ts
+mergeStates({
+  originalState: { phone: "111" },
+  submittedState: {},                    // user deleted phone
+  currentServerState: { phone: "222" },  // server changed phone
+})
+
+// {
+//   ok: false,
+//   kind: "conflict",
+//   conflicts: [
+//     {
+//       path: ["phone"],
+//       submitted: { exists: false },
+//       currentServer: { exists: true, value: "222" },
+//     },
+//   ],
+// }
+```
+
+Had the server set `phone: null` instead, `currentServer` would be `{ exists: true, value: null }`.
 
 `ok` intentionally follows the familiar JavaScript/Fetch convention without making CAM an HTTP abstraction.
 
@@ -285,6 +321,8 @@ These changes do not conflict:
 
 CAM should safely merge both.
 
+CAM only recurses into an object when it exists on all three sides. If both sides add the same key with **different** objects (for example `{}` → `{ addr: { city } }` vs `{ addr: { street } }`), there is no original object to merge against, so CAM reports one conflict at `["addr"]` rather than merging field by field. The same applies when the original value was a scalar, `null`, or an array.
+
 ## Arrays in v1
 
 Arrays are **atomic values in v1**.
@@ -315,6 +353,10 @@ For object properties:
 These are not equivalent.
 
 `undefined` is outside the v1 data model and should be rejected rather than silently converted into deletion.
+
+## Deterministic output
+
+Merged objects always have their keys **sorted**, including objects nested inside arrays. Input key order is not preserved. Conflicts are listed in the same sorted path order. The same inputs always produce the same serialized output.
 
 ## Example integration
 
