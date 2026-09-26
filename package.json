@@ -3,7 +3,12 @@
   "shortName": "cam",
   "version": "0.0.0-development",
   "description": "Headless three-way conflict resolution for CRUD mutations.",
-  "author": "Mo Hawary",
+  "author": {
+    "name": "Mo Hawary",
+    "email": "dev.elhawary@gmail.com",
+    "url": "https://www.linkedin.com/in/mohawary/"
+  },
+  "homepage": "https://mohawary.com/",
   "type": "module",
   "private": true,
   "sideEffects": false,
