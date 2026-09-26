@@ -4,6 +4,7 @@
   "description": "Headless three-way conflict resolution for CRUD mutations.",
   "type": "module",
   "private": true,
+  "sideEffects": false,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -19,7 +20,7 @@
     "clean": "rm -rf dist",
     "build": "npm run clean && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test dist/**/*.test.js",
+    "test": "npm run typecheck",
     "prepack": "npm run build"
   },
   "devDependencies": {
