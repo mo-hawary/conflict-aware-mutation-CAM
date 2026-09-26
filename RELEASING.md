@@ -4,7 +4,7 @@ CAM uses SemVer, Conventional Commits, Release Please, GitHub Releases, and `vX.
 
 ## Version policy
 
-The first public release is intended to be `0.1.0`.
+The initial GitHub release is `v0.1.0`. npm publication remains intentionally disabled until the repository/package are ready to be public.
 
 While CAM is below `1.0.0`:
 

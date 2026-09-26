@@ -4,7 +4,7 @@
 
 It is designed for the common case where a user edits a record, another actor changes that record before the first user saves, and the backend rejects the stale write.
 
-> Status: active pre-release implementation. The TypeScript v1 core is implemented on `main`; the package is still private and versioned `0.0.0-development`. `matchConflictError()` and `mergeStates()` are the current public primitives. Convenience adapters, property/fuzz testing, benchmarks, and Rust/WASM work remain roadmap items.
+> Status: active pre-public implementation. The TypeScript v1 core is implemented on `main` and the first GitHub release is `v0.1.0`. The npm package remains unpublished and `package.json` is still `"private": true`. `matchConflictError()` and `mergeStates()` are the current public runtime primitives. Convenience adapters, property/fuzz testing, benchmarks, and Rust/WASM work remain roadmap items.
 
 ## The problem
 
@@ -589,11 +589,11 @@ Completed on `main`:
 
 Next:
 
-1. decide public package/release shape and versioning
-2. add an optional convenience `resolveConflict()` only if it improves integration ergonomics
-3. add thin adapters such as `resolveOrThrow()` / `asResponse()` if justified by real consumers
-4. add property-based and fuzz testing
-5. benchmark realistic payloads and conflict shapes
+1. add property-based and fuzz testing
+2. benchmark realistic payloads and conflict shapes
+3. add an optional convenience `resolveConflict()` only if it improves integration ergonomics
+4. add thin adapters such as `resolveOrThrow()` / `asResponse()` if justified by real consumers
+5. configure the remaining repository protections and npm Trusted Publishing before public launch
 6. prototype Rust/WASM only if benchmarks justify the extra boundary and serialization cost
 
 ## Release and versioning
@@ -608,13 +608,13 @@ Before `1.0.0`:
 - compatible features -> patch
 - breaking changes -> minor
 
-The intended first public release is `0.1.0`. npm publishing remains disabled while `package.json` has `"private": true`.
+The first GitHub release is [`v0.1.0`](https://github.com/mo-hawary/conflict-aware-mutation-CAM/releases/tag/v0.1.0). npm publishing remains disabled while `package.json` has `"private": true`.
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) and [RELEASING.md](./RELEASING.md).
 
 ## Development
 
-The repository currently targets Node 24 in CI.
+The repository tests Node 22 and Node 24 in CI.
 
 ```bash
 npm ci
