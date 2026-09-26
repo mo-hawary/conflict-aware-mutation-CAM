@@ -17,10 +17,14 @@ export type ErrorMatchResult =
 
 export type PathSegment = string | number
 
+export type MissingValue = { kind: "missing" }
+
+export type ConflictValue = JsonValue | MissingValue
+
 export type Conflict = {
   path: PathSegment[]
-  submitted: JsonValue
-  currentServer: JsonValue
+  submitted: ConflictValue
+  currentServer: ConflictValue
 }
 
 export type MergeResult<T extends JsonValue> =
