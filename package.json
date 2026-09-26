@@ -1,0 +1,28 @@
+{
+  "name": "conflict-aware-mutation",
+  "version": "0.0.0-development",
+  "description": "Headless three-way conflict resolution for CRUD mutations.",
+  "type": "module",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test dist/**/*.test.js",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
+  }
+}
