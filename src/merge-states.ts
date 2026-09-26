@@ -48,7 +48,7 @@ function cloneJson(value: JsonValue): JsonValue {
 
   const clone: { [key: string]: JsonValue } = {}
   for (const key of Object.keys(value)) {
-    defineSafeProperty(clone, key, cloneJson(value[key]))
+    defineSafeProperty(clone, key, cloneJson(value[key]!))
   }
 
   return clone
@@ -69,7 +69,7 @@ function jsonEqual(left: JsonValue, right: JsonValue): boolean {
     }
 
     for (let index = 0; index < left.length; index += 1) {
-      if (!jsonEqual(left[index], right[index])) {
+      if (!jsonEqual(left[index]!, right[index]!)) {
         return false
       }
     }
@@ -86,8 +86,8 @@ function jsonEqual(left: JsonValue, right: JsonValue): boolean {
     }
 
     for (let index = 0; index < leftKeys.length; index += 1) {
-      const key = leftKeys[index]
-      if (key !== rightKeys[index] || !jsonEqual(left[key], right[key])) {
+      const key = leftKeys[index]!
+      if (key !== rightKeys[index] || !jsonEqual(left[key]!, right[key]!)) {
         return false
       }
     }
@@ -123,7 +123,7 @@ function childState(
   key: string,
 ): NodeState {
   return hasOwn(object, key)
-    ? { exists: true, value: object[key] }
+    ? { exists: true, value: object[key]! }
     : { exists: false }
 }
 
@@ -201,9 +201,7 @@ function mergeNode(
   }
 }
 
-export function mergeStates(
-  input: MergeStatesInput,
-): MergeResult {
+export function mergeStates(input: MergeStatesInput): MergeResult {
   assertJsonValue(input.originalState, "originalState")
   assertJsonValue(input.submittedState, "submittedState")
   assertJsonValue(input.currentServerState, "currentServerState")
