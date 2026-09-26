@@ -25,9 +25,3 @@
 * return fresh unmatched error objects ([2fffd8d](https://github.com/mo-hawary/conflict-aware-mutation-CAM/commit/2fffd8da93845e9249bc0154f7bb8e91e1752e9f))
 * satisfy strict indexed access in merge engine ([761db83](https://github.com/mo-hawary/conflict-aware-mutation-CAM/commit/761db834ac24b3716b5b894df2cd1c6226970be9))
 
-## Changelog
-
-All notable changes to CAM are tracked here.
-
-This file is maintained by Release Please from Conventional Commit history.
-Do not hand-edit normal release entries or versions.
