@@ -8,7 +8,7 @@
     "email": "dev.elhawary@gmail.com",
     "url": "https://www.linkedin.com/in/mohawary/"
   },
-  "homepage": "https://mohawary.com/",
+  "homepage": "https://github.com/mo-hawary/conflict-aware-mutation-CAM#readme",
   "type": "module",
   "private": true,
   "sideEffects": false,
@@ -29,9 +29,33 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && npm run typecheck:tests && node --test test/*.test.mjs",
     "prepack": "npm run build",
-    "typecheck:tests": "tsc -p tsconfig.test.json"
+    "typecheck:tests": "tsc -p tsconfig.test.json",
+    "pack:check": "npm pack --dry-run",
+    "prepublishOnly": "npm test"
   },
   "devDependencies": {
     "typescript": "7.0.2"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mo-hawary/conflict-aware-mutation-CAM.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mo-hawary/conflict-aware-mutation-CAM/issues"
+  },
+  "keywords": [
+    "conflict-resolution",
+    "optimistic-concurrency",
+    "three-way-merge",
+    "crud",
+    "typescript"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   }
 }

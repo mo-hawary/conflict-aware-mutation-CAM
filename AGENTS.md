@@ -257,7 +257,7 @@ Throw for invalid usage/configuration:
 - invalid option value
 - malformed path/config object
 
-Use `CAMConfigError` or `TypeError` consistently.
+Public validation/configuration failures use `CAMConfigError`. Reserve `TypeError` for internal invariant failures.
 
 Return `ok: false, kind: "conflict"` only for valid state inputs with a genuine concurrent path collision.
 
@@ -374,6 +374,16 @@ CAM is not:
 - a replacement for backend optimistic concurrency control
 
 Avoid scope expansion unless it directly improves the small conflict-aware mutation primitive.
+
+## Release discipline
+
+- PR titles must follow Conventional Commits because the repository uses squash merges.
+- Release Please owns normal package version bumps, `.release-please-manifest.json`, generated `CHANGELOG.md` release entries, `vX.Y.Z` tags, and GitHub Releases.
+- Do not manually create or move release tags.
+- Do not bypass the release PR to force a version.
+- Keep `"private": true` until npm Trusted Publishing is configured for the public repository.
+- Do not add long-lived npm publish tokens when OIDC trusted publishing is available.
+- CI must verify supported Node LTS versions and run a package tarball dry-run.
 
 ## Repository discipline
 

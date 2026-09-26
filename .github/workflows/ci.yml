@@ -5,18 +5,50 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  verify:
+  pr-title:
+    if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Validate Conventional Commit PR title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          node <<'NODE'
+          const title = process.env.PR_TITLE ?? ""
+          const conventional =
+            /^(feat|fix|perf|refactor|docs|test|build|ci|chore|revert)(\([a-zA-Z0-9._/-]+\))?(!)?: .+/
+          if (!conventional.test(title)) {
+            console.error(
+              "PR title must follow Conventional Commits, e.g. 'feat: add adapter' or 'fix!: change conflict shape'.",
+            )
+            process.exit(1)
+          }
+          NODE
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version:
+          - 22
+          - 24
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 24
+          node-version: ${{ matrix.node-version }}
           cache: npm
 
       - name: Install dependencies
@@ -25,6 +57,25 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      # npm test builds dist/ before running the test suite.
       - name: Test
         run: npm test
+
+  package:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify publish tarball
+        run: npm run pack:check

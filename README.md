@@ -596,6 +596,22 @@ Next:
 5. benchmark realistic payloads and conflict shapes
 6. prototype Rust/WASM only if benchmarks justify the extra boundary and serialization cost
 
+## Release and versioning
+
+CAM uses [Semantic Versioning](https://semver.org/) and Conventional Commit-compatible squash titles.
+
+Release Please owns version bumps, generated changelog entries, `vX.Y.Z` tags, and GitHub Releases. Do not manually bump normal release versions or create release tags.
+
+Before `1.0.0`:
+
+- fixes -> patch
+- compatible features -> patch
+- breaking changes -> minor
+
+The intended first public release is `0.1.0`. npm publishing remains disabled while `package.json` has `"private": true`.
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) and [RELEASING.md](./RELEASING.md).
+
 ## Development
 
 The repository currently targets Node 24 in CI.
@@ -608,6 +624,10 @@ npm run build
 ```
 
 `npm test` builds `dist/`, typechecks the test fixtures, and runs the Node test suite.
+
+## License
+
+CAM is released under the [MIT License](./LICENSE).
 
 ## Why CAM?
 

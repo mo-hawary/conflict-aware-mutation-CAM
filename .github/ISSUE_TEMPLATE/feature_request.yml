@@ -1,0 +1,29 @@
+name: Feature request
+description: Propose a focused improvement to CAM
+title: "feat: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What concrete conflict-resolution problem is not covered today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed contract
+      description: Describe inputs, outputs, and semantics rather than only UI/integration details.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: This stays headless, network-free, and framework-independent.
+          required: true
