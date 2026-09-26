@@ -6,61 +6,74 @@ const MAX_JSON_DEPTH = 512
 const hasOwn = (value: object, key: PropertyKey): boolean =>
   Object.prototype.hasOwnProperty.call(value, key)
 
-export function assertErrorSignal(
+function readOwn(value: object, key: string): unknown {
+  return hasOwn(value, key) ? (value as Record<string, unknown>)[key] : undefined
+}
+
+function formatPath(path: string): string {
+  return path.length > 120 ? `${path.slice(0, 60)}…${path.slice(-40)}` : path
+}
+
+/**
+ * Validates an error signal and returns a plain snapshot of its own `code`
+ * and `text` properties. Inherited properties (including prototype getters on
+ * class instances) are ignored so that matching and output only ever use the
+ * fields that were validated.
+ */
+export function normalizeErrorSignal(
   value: unknown,
   label = "error signal",
-): asserts value is ErrorSignal {
+): ErrorSignal {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new CAMConfigError(`${label} must be an object`)
   }
 
-  const candidate = value as Record<string, unknown>
-  const hasCode = hasOwn(candidate, "code") && candidate.code !== undefined
-  const hasText = hasOwn(candidate, "text") && candidate.text !== undefined
+  const code = readOwn(value, "code")
+  const text = readOwn(value, "text")
 
-  if (!hasCode && !hasText) {
-    throw new CAMConfigError(`${label} must define at least one of code or text`)
+  if (code === undefined && text === undefined) {
+    throw new CAMConfigError(
+      `${label} must define at least one own property: code or text`,
+    )
   }
 
-  if (
-    hasCode &&
-    typeof candidate.code !== "string" &&
-    typeof candidate.code !== "number"
-  ) {
+  if (code !== undefined && typeof code !== "string" && typeof code !== "number") {
     throw new CAMConfigError(`${label}.code must be a string or number`)
   }
 
-  if (
-    hasCode &&
-    typeof candidate.code === "number" &&
-    !Number.isFinite(candidate.code)
-  ) {
+  if (typeof code === "number" && !Number.isFinite(code)) {
     throw new CAMConfigError(`${label}.code must be a finite number`)
   }
 
-  if (hasText && typeof candidate.text !== "string") {
+  if (text !== undefined && typeof text !== "string") {
     throw new CAMConfigError(`${label}.text must be a string`)
   }
-}
 
-export function assertErrorOutput(
-  value: unknown,
-): asserts value is ErrorOutput {
-  if (value === undefined || value === "backend") {
-    return
+  if (code === undefined) {
+    return { text: text as string }
   }
 
-  if (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    typeof (value as Record<string, unknown>).text === "string"
-  ) {
-    return
+  return text === undefined ? { code } : { code, text }
+}
+
+/**
+ * Validates `errorOutput` and returns a plain snapshot. Only an own `text`
+ * property is honored for the custom-text form.
+ */
+export function normalizeErrorOutput(value: unknown): ErrorOutput {
+  if (value === undefined || value === "backend") {
+    return "backend"
+  }
+
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    const text = readOwn(value, "text")
+    if (typeof text === "string") {
+      return { text }
+    }
   }
 
   throw new CAMConfigError(
-    'errorOutput must be "backend" or an object with a text string',
+    'errorOutput must be "backend" or an object with an own text string',
   )
 }
 
@@ -73,7 +86,7 @@ export function assertJsonValue(
   const visit = (current: unknown, path: string, depth: number): void => {
     if (depth > MAX_JSON_DEPTH) {
       throw new CAMConfigError(
-        `${path} exceeds CAM's maximum JSON nesting depth of ${MAX_JSON_DEPTH}`,
+        `${formatPath(path)} exceeds CAM's maximum JSON nesting depth of ${MAX_JSON_DEPTH}`,
       )
     }
 

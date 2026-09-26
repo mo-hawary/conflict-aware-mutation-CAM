@@ -1,41 +1,29 @@
 import type {
   ErrorMatchResult,
+  ErrorOutput,
   ErrorSignal,
   MatchConflictErrorInput,
 } from "./types.js"
-import { assertErrorOutput, assertErrorSignal } from "./validation.js"
+import { normalizeErrorOutput, normalizeErrorSignal } from "./validation.js"
 
+// Both helpers receive normalized signals: plain objects carrying only the
+// validated own `code` / `text` fields.
 function sameCode(actual: ErrorSignal, expected: ErrorSignal): boolean {
-  if (!("code" in expected) || expected.code === undefined) return true
-  return "code" in actual && actual.code === expected.code
+  if (expected.code === undefined) return true
+  return actual.code === expected.code
 }
 
 function sameText(actual: ErrorSignal, expected: ErrorSignal): boolean {
-  if (!("text" in expected) || expected.text === undefined) return true
-  return "text" in actual && actual.text === expected.text
+  if (expected.text === undefined) return true
+  return actual.text === expected.text
 }
 
-function cloneErrorSignal(error: ErrorSignal): ErrorSignal {
-  if ("code" in error && error.code !== undefined) {
-    if ("text" in error && error.text !== undefined) {
-      return { code: error.code, text: error.text }
-    }
-
-    return { code: error.code }
+function withOutput(error: ErrorSignal, output: ErrorOutput): ErrorSignal {
+  if (output === "backend") {
+    return error
   }
 
-  return { text: error.text }
-}
-
-function withOutput(
-  error: ErrorSignal,
-  output: MatchConflictErrorInput["errorOutput"],
-): ErrorSignal {
-  if (output === undefined || output === "backend") {
-    return cloneErrorSignal(error)
-  }
-
-  if ("code" in error && error.code !== undefined) {
+  if (error.code !== undefined) {
     return { code: error.code, text: output.text }
   }
 
@@ -45,19 +33,16 @@ function withOutput(
 export function matchConflictError(
   input: MatchConflictErrorInput,
 ): ErrorMatchResult {
-  assertErrorSignal(input.error, "error")
-  assertErrorSignal(input.expectedError, "expectedError")
-  assertErrorOutput(input.errorOutput)
+  const error = normalizeErrorSignal(input.error, "error")
+  const expectedError = normalizeErrorSignal(input.expectedError, "expectedError")
+  const errorOutput = normalizeErrorOutput(input.errorOutput)
 
-  if (
-    sameCode(input.error, input.expectedError) &&
-    sameText(input.error, input.expectedError)
-  ) {
+  if (sameCode(error, expectedError) && sameText(error, expectedError)) {
     return { matched: true }
   }
 
   return {
     matched: false,
-    error: withOutput(input.error, input.errorOutput),
+    error: withOutput(error, errorOutput),
   }
 }
