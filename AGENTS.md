@@ -85,6 +85,8 @@ Rules:
 - Prefer `code`.
 - `text` matching is exact only in v1.
 - If both expected fields are supplied, both must match.
+- `code` matching is strict (`409` does not match `"409"`); numeric codes must be finite.
+- Read only **own** `code`/`text` properties. Validation, matching, and output must all use the same validated snapshot; never read inherited fields or prototype getters.
 - Invalid matcher configuration throws.
 
 ### `matchConflictError()`
@@ -135,10 +137,15 @@ Result:
 ```ts
 type PathSegment = string | number
 
+/** `exists: false` means the property is absent (deleted) on that side. */
+type ConflictValue =
+  | { exists: false }
+  | { exists: true; value: JsonValue }
+
 type Conflict = {
   path: PathSegment[]
-  submitted: JsonValue
-  currentServer: JsonValue
+  submitted: ConflictValue
+  currentServer: ConflictValue
 }
 
 type MergeResult<T extends JsonValue> =
@@ -155,6 +162,8 @@ type MergeResult<T extends JsonValue> =
 ```
 
 Do **not** expose `value?: T` on a conflict result in v1. An unresolved partial merge must never look persistable.
+
+Conflict sides use `ConflictValue`, not raw `JsonValue`, so deletion (`{ exists: false }`) stays distinct from explicit `null` (`{ exists: true, value: null }`). Example: original `{ phone: "111" }`, submitted `{}`, current server `{ phone: "222" }` produces a conflict at `["phone"]` with `submitted: { exists: false }` and `currentServer: { exists: true, value: "222" }`.
 
 `ok` is intentionally familiar to JavaScript developers, but the merge core is not an HTTP `Response`.
 
@@ -223,6 +232,8 @@ Rules:
 - both change differently -> conflict at the array path
 
 Do not recurse into array indexes for merge semantics in v1.
+
+Recurse into an object only when it exists as a plain object on all three sides. Both sides adding the same key with different objects is a conflict at that key's path.
 
 ## Deletion/null semantics
 
@@ -318,8 +329,10 @@ Every bug fix must include a regression test.
 
 - Be prototype-pollution-safe when traversing or constructing objects.
 - Never mutate `originalState`, `submittedState`, or `currentServerState`.
-- Keep output deterministic.
-- Avoid recursion patterns that can trivially exhaust the stack; define a depth strategy before stable release.
+- Keep output deterministic: merged object keys are always sorted (input key order is not preserved), and conflicts are emitted in sorted path order.
+- Treat `-0` and `0` as equal.
+- Reject symbol-keyed properties.
+- Depth strategy for v1: validation rejects nesting deeper than 512 levels with `CAMConfigError`, which bounds all recursive traversal.
 
 ## Performance
 
