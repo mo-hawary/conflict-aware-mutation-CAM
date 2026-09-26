@@ -1,7 +1,9 @@
 {
   "name": "conflict-aware-mutation",
+  "shortName": "cam",
   "version": "0.0.0-development",
   "description": "Headless three-way conflict resolution for CRUD mutations.",
+  "author": "Mo Hawary",
   "type": "module",
   "private": true,
   "sideEffects": false,
