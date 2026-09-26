@@ -27,10 +27,10 @@ export type Conflict = {
   currentServer: ConflictValue
 }
 
-export type MergeResult =
+export type MergeResult<T extends JsonValue = JsonValue> =
   | {
       ok: true
-      value: JsonValue
+      value: T
       conflicts: []
     }
   | {
@@ -45,12 +45,8 @@ export type MatchConflictErrorInput = {
   errorOutput?: ErrorOutput
 }
 
-export type MergeStatesInput<
-  TOriginal extends JsonValue = JsonValue,
-  TSubmitted extends JsonValue = JsonValue,
-  TCurrentServer extends JsonValue = JsonValue,
-> = {
-  originalState: TOriginal
-  submittedState: TSubmitted
-  currentServerState: TCurrentServer
+export type MergeStatesInput<T extends JsonValue = JsonValue> = {
+  originalState: T
+  submittedState: T
+  currentServerState: T
 }
