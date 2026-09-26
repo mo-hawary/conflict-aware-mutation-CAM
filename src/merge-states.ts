@@ -47,7 +47,7 @@ function cloneJson(value: JsonValue): JsonValue {
   }
 
   const clone: { [key: string]: JsonValue } = {}
-  for (const key of Object.keys(value)) {
+  for (const key of Object.keys(value).sort()) {
     defineSafeProperty(clone, key, cloneJson(value[key]!))
   }
 
@@ -55,7 +55,7 @@ function cloneJson(value: JsonValue): JsonValue {
 }
 
 function jsonEqual(left: JsonValue, right: JsonValue): boolean {
-  if (Object.is(left, right)) {
+  if (left === right) {
     return true
   }
 
@@ -201,7 +201,9 @@ function mergeNode(
   }
 }
 
-export function mergeStates(input: MergeStatesInput): MergeResult {
+export function mergeStates<T extends JsonValue>(
+  input: MergeStatesInput<T>,
+): MergeResult<T> {
   assertJsonValue(input.originalState, "originalState")
   assertJsonValue(input.submittedState, "submittedState")
   assertJsonValue(input.currentServerState, "currentServerState")
@@ -227,7 +229,7 @@ export function mergeStates(input: MergeStatesInput): MergeResult {
 
   return {
     ok: true,
-    value: result.state.value,
+    value: result.state.value as T,
     conflicts: [],
   }
 }
