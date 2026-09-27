@@ -261,6 +261,43 @@ test("keeps the conflict visible and reports a failed resolved request", async (
   await waitFor(() => assert.equal(entry.container.querySelector("fieldset"), null))
 })
 
+test("draft edits after a conflict invalidate old choices and survive a fresh merge", async () => {
+  const fetchQueue = [
+    loaded(order({ notes: "original" }), "e1"),
+    loaded(order({ notes: "server one" }), "e2"),
+    loaded(order({ notes: "server two" }), "e3"),
+  ]
+  const puts = []
+  const api = {
+    fetchOrder: async () => fetchQueue.shift(),
+    putOrder: async (_id, state, etag) => {
+      puts.push({ state: structuredClone(state), etag })
+      throw staleWrite()
+    },
+  }
+  const entry = await mountEditor("one", api)
+  changeNotes(entry, "mine")
+  await submit(entry)
+  await waitFor(() => assert.equal(radioInputs(entry).length, 2))
+
+  fireEvent.click(radioInputs(entry)[0])
+  changeNotes(entry, "later draft")
+  await applyChoices(entry)
+  await waitFor(() => assert.match(entry.getByRole("alert").textContent, /Save again to refresh the choices/))
+  assert.equal(puts.length, 1, "choices based on the older draft do not start a save")
+  assert.equal(notesInput(entry).value, "later draft")
+
+  await submit(entry)
+  await waitFor(() => assert.equal(radioInputs(entry).length, 2))
+  assert.equal(puts.length, 2)
+  assert.equal(puts[1].etag, "e1", "the refreshed merge starts from the coherent editing session")
+  assert.equal(notesInput(entry).value, "later draft")
+  assert.match(entry.container.querySelector("fieldset").textContent, /later draft/)
+  assert.match(entry.container.querySelector("fieldset").textContent, /server two/)
+  assert.equal(radioInputs(entry)[0].checked, false, "the new conflict resets to the server choice")
+  assert.equal(radioInputs(entry)[1].checked, true)
+})
+
 test("a second stale write creates a new conflict and resets the choice set", async () => {
   const initial = loaded(order({ notes: "original" }), "e1")
   const firstServer = loaded(order({ notes: "server one" }), "e2")

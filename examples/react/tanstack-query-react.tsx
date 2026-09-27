@@ -20,7 +20,12 @@ export type OrderApi = {
 }
 
 class ConflictNeedsDecision extends Error {
-  constructor(readonly conflicts: Conflict[], readonly inputs: Inputs, readonly etag: string) {
+  constructor(
+    readonly conflicts: Conflict[],
+    readonly inputs: Inputs,
+    readonly etag: string,
+    readonly revision: number,
+  ) {
     super("Conflicting changes need a decision")
   }
 }
@@ -29,7 +34,7 @@ export function useSaveOrder(id: string, api: OrderApi) {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: async ({ originalState, submittedState, etag }: SaveVariables) => {
+    mutationFn: async ({ originalState, submittedState, etag, revision }: SaveVariables) => {
       try {
         return await api.putOrder(id, submittedState, etag)
       } catch (error) {
@@ -39,7 +44,7 @@ export function useSaveOrder(id: string, api: OrderApi) {
         const latest = await api.fetchOrder(id)
         const inputs = { originalState, submittedState, currentServerState: latest.state }
         const merged = mergeStates<Order>(inputs)
-        if (!merged.ok) throw new ConflictNeedsDecision(merged.conflicts, inputs, latest.etag)
+        if (!merged.ok) throw new ConflictNeedsDecision(merged.conflicts, inputs, latest.etag, revision)
 
         // Each submission gets one merge and at most one automatic re-save.
         // A write that races that re-save is surfaced as an error; the caller
@@ -118,14 +123,18 @@ function Editor({ id, api, original }: { id: string; api: OrderApi; original: Lo
           pending={pending}
           pendingSave={save.isPending}
           error={saveError}
-          onResolved={(state, etag) =>
-            runSave({
+          onResolved={(state, etag) => {
+            if (revisionRef.current !== pending.revision) {
+              setSaveError("The draft changed while this conflict was open. Save again to refresh the choices.")
+              return Promise.resolve()
+            }
+            return runSave({
               originalState: pending.inputs.currentServerState,
               submittedState: state,
               etag,
               revision: revisionRef.current,
             })
-          }
+          }}
         />
       )}
       {saveError && !pending && <p role="alert">{saveError}</p>}
