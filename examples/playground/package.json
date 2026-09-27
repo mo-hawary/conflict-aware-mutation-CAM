@@ -7,7 +7,7 @@
     "build": "vite build"
   },
   "dependencies": {
-    "conflict-aware-mutation": "0.1.2"
+    "conflict-aware-mutation": "file:../.."
   },
   "devDependencies": {
     "vite": "8.3.1"

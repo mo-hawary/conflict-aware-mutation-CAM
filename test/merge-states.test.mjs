@@ -455,6 +455,23 @@ test("rejects accessor properties without invoking them", () => {
   assert.equal(reads, 0)
 })
 
+test("rejects non-enumerable object accessors without invoking them", () => {
+  let reads = 0
+  const withHiddenGetter = { a: 0 }
+  Object.defineProperty(withHiddenGetter, "hidden", {
+    get: () => {
+      reads += 1
+      return 1
+    },
+  })
+
+  assert.throws(
+    () => mergeStates({ originalState: {}, submittedState: withHiddenGetter, currentServerState: {} }),
+    (error) => error instanceof CAMConfigError && /accessor/.test(error.message),
+  )
+  assert.equal(reads, 0)
+})
+
 test("rejects accessor array elements", () => {
   const items = [1, 2]
   Object.defineProperty(items, 0, { enumerable: true, get: () => 1 })
@@ -466,25 +483,44 @@ test("rejects accessor array elements", () => {
 })
 
 test("merges exactly the value it validated", () => {
-  // A proxy can change what it returns between reads. CAM must merge the value
-  // it validated, never re-reading it later through a getter.
-  let reads = 0
+  // A proxy can change what it reports between descriptor lookups. The merge
+  // must use the private value captured and validated by this call.
+  let descriptorReads = 0
+  let propertyReads = 0
   const proxy = new Proxy(
     { a: 0 },
     {
       getOwnPropertyDescriptor(object, key) {
-        reads += 1
-        return { ...Reflect.getOwnPropertyDescriptor(object, key), value: reads }
+        descriptorReads += 1
+        return { ...Reflect.getOwnPropertyDescriptor(object, key), value: `captured-${descriptorReads}` }
       },
       get: () => {
-        throw new Error("merge must not re-read validated properties")
+        propertyReads += 1
+        return "read-through-proxy"
       },
     },
   )
 
   const result = mergeStates({ originalState: { a: 0 }, submittedState: proxy, currentServerState: { a: 0 } })
 
-  assert.deepEqual(result, { ok: true, value: { a: reads }, conflicts: [] })
+  assert.equal(result.ok, true)
+  if (result.ok) assert.equal(result.value.a, `captured-${descriptorReads}`)
+  assert.ok(descriptorReads > 0)
+  assert.equal(propertyReads, 0)
+})
+
+test("rejects a proxy property that disappears during descriptor inspection", () => {
+  const proxy = new Proxy({ a: 0 }, {
+    getOwnPropertyDescriptor(target, key) {
+      if (key === "a") return undefined
+      return Reflect.getOwnPropertyDescriptor(target, key)
+    },
+  })
+
+  assert.throws(
+    () => mergeStates({ originalState: {}, submittedState: proxy, currentServerState: {} }),
+    (error) => error instanceof CAMConfigError,
+  )
 })
 
 test("rejects Array subclasses and arrays with extra properties", () => {
@@ -498,6 +534,25 @@ test("rejects Array subclasses and arrays with extra properties", () => {
       CAMConfigError,
     )
   }
+})
+
+test("rejects non-enumerable extra array properties", () => {
+  const items = [1]
+  Object.defineProperty(items, "label", { value: "hidden" })
+
+  assert.throws(
+    () => mergeStates({ originalState: { items: [1] }, submittedState: { items }, currentServerState: { items: [1] } }),
+    (error) => error instanceof CAMConfigError && /extra properties/.test(error.message),
+  )
+})
+
+test("rejects sparse arrays without relying on enumerable keys", () => {
+  const items = new Array(1)
+
+  assert.throws(
+    () => mergeStates({ originalState: { items: [] }, submittedState: { items }, currentServerState: { items: [] } }),
+    (error) => error instanceof CAMConfigError && /holes/.test(error.message),
+  )
 })
 
 test("accepts null-prototype objects", () => {
@@ -571,6 +626,6 @@ test("rejects a sparse array whose extra property hides the hole count", () => {
 
   assert.throws(
     () => mergeStates({ originalState: { items: [1, 2, 3] }, submittedState: { items }, currentServerState: { items: [1, 2, 3] } }),
-    (error) => error instanceof CAMConfigError && /sparse/.test(error.message),
+    (error) => error instanceof CAMConfigError && /(holes|extra properties)/.test(error.message),
   )
 })

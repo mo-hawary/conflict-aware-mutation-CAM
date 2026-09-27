@@ -77,6 +77,33 @@ export function runSmoke(cam) {
     throwsConfigError(() => matchConflictError({ error: {}, expectedError: { code: 409 } }))
   })
 
+  const nested = (kind, levels) => {
+    let value = 0
+    for (let index = 0; index < levels; index += 1) {
+      value = kind === "array" ? [value] : { child: value }
+    }
+    return value
+  }
+  const assertDepthAccepted = (state) => {
+    const result = mergeStates({ originalState: state, submittedState: state, currentServerState: state })
+    if (!result.ok) throw new Error("unchanged state at the nesting limit should merge")
+  }
+
+  check("accepts 512 nested object levels", () => assertDepthAccepted(nested("object", 512)))
+  check("rejects 513 nested object levels", () =>
+    throwsConfigError(() => {
+      const state = nested("object", 513)
+      mergeStates({ originalState: state, submittedState: state, currentServerState: state })
+    }),
+  )
+  check("accepts 512 nested array levels", () => assertDepthAccepted(nested("array", 512)))
+  check("rejects 513 nested array levels", () =>
+    throwsConfigError(() => {
+      const state = nested("array", 513)
+      mergeStates({ originalState: state, submittedState: state, currentServerState: state })
+    }),
+  )
+
   return results
 }
 

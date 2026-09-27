@@ -62,9 +62,12 @@ Reject in v1:
 - `NaN`
 - `Infinity` / `-Infinity`
 - accessor (getter/setter) properties, rejected without invoking them
-- `Array` subclasses, sparse arrays, and arrays with extra non-index properties
+- `Array` subclasses, sparse arrays, and arrays with extra own non-index properties, including non-enumerable ones
+- non-enumerable data properties on objects are ignored as they are not part of the JSON object representation
 
-Validation reads every input property exactly once, through its own data descriptor, into a private snapshot. Merging operates only on that snapshot, so a proxy or getter cannot make the merged value differ from the validated value.
+Validation copies included values from own data-property descriptors into private snapshots; merging operates only on those validated snapshots. Proxy traps may run while keys and descriptors are discovered, and CAM does not promise a particular trap count. Accessor properties are rejected without being invoked.
+
+Migration note: `CAMConfigError` now extends `Error` directly rather than `TypeError`. Consumers should use `instanceof CAMConfigError` or `error.code === "CAM_CONFIG_ERROR"` to detect invalid CAM inputs. Validation rejects accessor properties (including non-enumerable getters/setters), `Array` subclasses, sparse arrays, and arrays with extra own properties; callers should normalize those values to plain JSON data first.
 
 Null-prototype objects are accepted; output objects always use `Object.prototype`. Shared (non-cyclic) references are treated as independent copies, as `JSON.stringify` would.
 

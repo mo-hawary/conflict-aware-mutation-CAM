@@ -22,8 +22,9 @@ CAM supports deeply nested JSON objects, including records keyed by IDs. It recu
 | Arrays, including arrays of objects | Yes | Atomic at the array path; no element-by-element merge |
 | Property additions and deletions | Yes | Compared per object property; absence is distinct from `null` |
 | `Date`, `Map`, `Set`, class instances, `BigInt`, `undefined`, functions, symbols, non-finite numbers | No | Rejected with `CAMConfigError` |
-| Sparse arrays, `Array` subclasses, arrays with extra properties, and symbol-keyed properties | No | Rejected with `CAMConfigError` |
-| Getter/setter (accessor) properties | No | Rejected with `CAMConfigError` without being invoked |
+| Sparse arrays, `Array` subclasses, arrays with extra own properties (including non-enumerable ones), and symbol-keyed properties | No | Rejected with `CAMConfigError` |
+| Getter/setter (accessor) properties, including non-enumerable ones | No | Rejected with `CAMConfigError` without being invoked |
+| Non-enumerable data properties on plain objects | Ignored | Only enumerable object properties are part of the JSON snapshot |
 | Cyclic references | No | Rejected with `CAMConfigError` |
 | Nesting deeper than 512 levels | No | Rejected with `CAMConfigError` |
 
@@ -272,9 +273,15 @@ const result = mergeStates({
 
 On success, the result is `{ ok: true, value, conflicts: [] }`. On a conflict, it is `{ ok: false, kind: "conflict", conflicts }` and has no partial `value` to save. Conflict paths are arrays of segments, such as `["shippingAddress", "city"]`; a key containing a dot stays one segment. `exists: false` means the property was deleted, which differs from `{ exists: true, value: null }`.
 
-CAM accepts JSON-compatible primitives, arrays, and plain objects. It rejects `undefined`, non-finite numbers, `Date`, class instances, symbols, getters, cycles, and nesting beyond 512 levels with `CAMConfigError`. Invalid input is a programmer error; an ordinary concurrent edit returns a conflict result. `CAMConfigError` extends `Error` (not `TypeError`) and has `code: "CAM_CONFIG_ERROR"`.
+CAM accepts JSON-compatible primitives, arrays, and plain objects. It rejects `undefined`, non-finite numbers, `Date`, class instances, symbols, accessors, cycles, sparse arrays, `Array` subclasses, arrays with extra own properties, and nesting beyond 512 levels with `CAMConfigError`. Invalid input is a programmer error; an ordinary concurrent edit returns a conflict result. `CAMConfigError` extends `Error` (not `TypeError`) and has `code: "CAM_CONFIG_ERROR"`.
 
-CAM reads each input property once into a private copy, so it never mutates your inputs and the result never shares objects with them. Merged object keys and conflict paths have deterministic sorted order, and `-0` becomes `0`.
+CAM copies validated own data-property values into private snapshots before merging. The merge only sees those snapshots, so a proxy cannot change the values after validation. Proxy traps may run while CAM enumerates keys and obtains descriptors; their exact call counts are not part of the contract. CAM never mutates your inputs, and the result never shares objects with them. Merged object keys and conflict paths have deterministic sorted order, and `-0` becomes `0`.
+
+### Migration from 0.1.x
+
+`CAMConfigError` now extends `Error` directly instead of `TypeError`. Replace `error instanceof TypeError` checks for invalid CAM inputs with `error instanceof CAMConfigError`, or check `error.code === "CAM_CONFIG_ERROR"`. The class and code distinguish public validation failures from internal `TypeError` invariant failures.
+
+Validation now rejects accessor properties, including hidden getters and setters, without invoking them. It also rejects `Array` subclasses, sparse arrays, and arrays with extra own properties (including non-enumerable properties). Normalize these inputs into plain JSON data before calling CAM. Hidden non-enumerable data properties on plain objects remain outside the JSON snapshot and are ignored.
 
 ### TypeScript notes
 
@@ -301,7 +308,7 @@ npm run bench           # representative mergeStates() benchmarks
 npm run mutation        # Stryker mutation testing (slow)
 ```
 
-Full API reference: <https://mo-hawary.github.io/conflict-aware-mutation-CAM/>. Integration examples, including fetch/REST and TanStack Query with React, are in [`examples/`](./examples/README.md).
+Full API reference: <https://mo-hawary.github.io/conflict-aware-mutation-CAM/>. Integration examples, including fetch/REST and TanStack Query with React, are in [`examples/`](./examples/README.md). For maintainer and portfolio context, see [Mohawary.com](https://mohawary.com/open-source); library behavior and API details stay documented here and in the API reference.
 
 See [Contributing](./CONTRIBUTING.md) for PR guidance, [Security](./SECURITY.md) for private vulnerability reports, [Code of Conduct](./CODE_OF_CONDUCT.md), [Changelog](./CHANGELOG.md), and [Releasing](./RELEASING.md) for the release process.
 

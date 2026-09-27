@@ -20,6 +20,8 @@ jobs:
     steps:
       - name: Checkout head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Checkout base
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -40,20 +42,37 @@ jobs:
           (cd base && npm ci && npm run build)
 
       # Both builds run through the head's benchmark script, so base branches
-      # without bench/ still compare. Runs are interleaved to spread runner noise.
-      - name: Run benchmarks
+      # without bench/ still compare. Five alternating runs spread runner noise.
+      - name: Run alternating benchmarks
         env:
           CAM_BENCH_MS: "1000"
         run: |
-          CAM_DIST=base/dist/index.js CAM_BENCH_JSON=base.json node bench/merge.bench.mjs
-          CAM_BENCH_JSON=head.json node bench/merge.bench.mjs
+          for run in 1 2 3 4 5; do
+            CAM_DIST=base/dist/index.js CAM_BENCH_JSON="base-${run}.json" node bench/merge.bench.mjs
+            CAM_BENCH_JSON="head-${run}.json" node bench/merge.bench.mjs
+          done
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from "node:fs"
+          const median = (values) => {
+            const sorted = [...values].sort((a, b) => a - b)
+            return sorted[Math.floor(sorted.length / 2)]
+          }
+          for (const revision of ["base", "head"]) {
+            const runs = [1, 2, 3, 4, 5].map((run) => JSON.parse(readFileSync(`${revision}-${run}.json`, "utf8")))
+            const names = Object.keys(runs[0])
+            const result = Object.fromEntries(names.map((name) => [name, median(runs.map((sample) => sample[name]))]))
+            writeFileSync(`${revision}.json`, `${JSON.stringify(result, null, 2)}\n`)
+          }
+          NODE
 
       # Report-only: shared runners are too noisy for a hard gate. Changes over
       # 25% slower are flagged in the summary and as workflow warnings.
-      - name: Compare
+      - name: Compare median benchmarks
         run: |
           {
-            echo "## mergeStates() benchmarks"
+            echo "## mergeStates() benchmarks (median of five alternating runs)"
+            echo
+            echo "Measured revisions: base=${{ github.event.pull_request.base.sha || 'main' }}, head=${{ github.event.pull_request.head.sha || github.sha }}"
             echo
             node bench/compare.mjs base.json head.json 0.25
           } >> "$GITHUB_STEP_SUMMARY"
