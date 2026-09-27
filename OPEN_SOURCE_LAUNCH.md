@@ -28,15 +28,15 @@ This file records preparation evidence only. It does not authorize changing repo
 
 ## CI checks to require
 
-This PR changes package verification to a Node 22/24 matrix. Do not guess required check names from YAML alone. After this PR has run successfully, copy the exact check names GitHub reports for:
+PR #9 CI run `36325690855` completed these observed checks successfully:
 
-- conventional PR-title validation
-- test on Node 22
-- test on Node 24
-- installed-package verification on Node 22
-- installed-package verification on Node 24
+- `pr-title`
+- `test (22)`
+- `test (24)`
+- `package (22)`
+- `package (24)`
 
-Then configure `main` protection to require those observed checks and a pull request before merge.
+The package jobs install and exercise the real packed tarball, not workspace source paths. Configure `main` protection to require these observed checks and a pull request before merge. Re-confirm the names if the workflow job names change later.
 
 ## Publication gates
 
