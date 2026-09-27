@@ -1,51 +1,49 @@
-# Open-source launch checklist
+# Public launch and release status
 
 Status snapshot: **September 27, 2026**
 
-Reviewed main SHA: `5a96faf23680bf00dc2e10322afef51207fef66e`.
+Reviewed `main`: `cbe1df7140841397465a6a9cfc06a5621ef67d6b`
+
+Repository: [mo-hawary/conflict-aware-mutation-CAM](https://github.com/mo-hawary/conflict-aware-mutation-CAM)
 
 ## Source and history review
 
-- **Verified:** the repository is public after an all-refs secret-history review.
-- **Verified:** official Gitleaks 8.18.4 was checksum-verified and detected a synthetic GitHub token fixture before scanning.
-- **Verified:** the mirrored remote contained 23 refs and 72 unique reachable commits, including GitHub pull-request head refs. Gitleaks 8.18.4 scanned the full `--all` history (70 commit diffs) and reported zero findings; the six commits reachable only from pull-request refs were also scanned individually with zero findings. No secret values were emitted or stored in this repository.
-- **Scope:** this scan covered current remote branches and tags. It does not cover unreachable Git objects or unpushed local-only branches.
-- **Verified:** MIT license is present. The owner authorized exposing the repository contents, including the maintainer and contact metadata already in `package.json`.
+- Before the repository was made public, Gitleaks 8.18.4 was checksum-verified and smoke-tested against a synthetic GitHub token fixture.
+- The scan covered the mirrored remote refs and GitHub pull-request heads at the exposure snapshot (`5a96faf23680bf00dc2e10322afef51207fef66e`): 70 history diffs plus six commits reachable only from pull-request refs. It found no secrets. Secret values were not printed or stored in the repository.
+- The scan does not cover unreachable Git objects or unpushed local-only branches.
+- The repository includes an MIT license. Maintainer metadata in `package.json` was intentionally public as part of the launch authorization.
 
 ## Repository controls
 
-| Control | Status | Evidence |
-| --- | --- | --- |
-| Repository visibility | **Complete** | GitHub reports the repository public. |
-| `main` protection | **Complete** | Active ruleset requires pull requests, squash merges, and all five CI checks listed below. No bypass actor is configured. |
-| `v*` tag protection | **Complete** | Active ruleset blocks updates and deletions; tag creation remains available to Release Please. No bypass actor is configured. |
-| Immutable releases | **Complete for future releases** | Repository setting is enabled. GitHub applies immutability to releases created after the setting is enabled; existing `v0.1.0` remains non-immutable. |
-| Private vulnerability reporting | **Complete** | GitHub API reports enabled. |
-| Actions PR creation | **Complete** | Workflow permissions remain read-only by default; the repository setting now allows Actions to create and approve PRs as needed. |
-| npm environment | **Complete** | Environment `npm` exists and is used by `publish-npm.yml`; it has no required reviewer rule. |
-| Release Please credential | **Pending** | `RELEASE_PLEASE_TOKEN` is not yet configured. Add a fine-grained token limited to this repository with Contents, Issues, and Pull requests read/write so generated PRs trigger CI. |
-| Release Please release PR | **Pending** | No open release PR exists yet. Rerun after the token is configured, then require its CI checks before merging. |
-| npm Trusted Publisher | **Pending** | Requires the real npm package to exist; configure after the bootstrap publish. |
+| Control | Verified status |
+| --- | --- |
+| Visibility | Public. |
+| `main` protection | Active ruleset requires PRs, squash merges, strict checks `pr-title`, `test (22)`, `test (24)`, `package (22)`, and `package (24)`. No bypass actors. |
+| `v*` tag protection | Active ruleset blocks tag updates and deletions; Release Please can create tags. No bypass actors. |
+| Immutable releases | Enabled. The `v0.1.1` GitHub release is immutable; it was published after this setting was enabled. |
+| Vulnerability reporting | Private vulnerability reporting is enabled. |
+| Actions PR creation | Enabled. Workflow token permissions remain read-only by default; the repository allows workflows to create and approve PRs. |
+| `npm` environment | Exists and is used by `publish-npm.yml`; no reviewer gate is configured. |
+| Release Please credential | `RELEASE_PLEASE_TOKEN` is configured as a repository Actions secret. The fine-grained token expires January 1, 2027. |
 
-## CI checks to require
+## Release and npm publication
 
-PR #12 CI run `36342318735` passed all of the following checks, now required on `main`:
+- Release Please created its own `0.1.1` release PR (#14). All five required checks passed before it was merged.
+- Release Please created tag [`v0.1.1`](https://github.com/mo-hawary/conflict-aware-mutation-CAM/releases/tag/v0.1.1) at `cbe1df7140841397465a6a9cfc06a5621ef67d6b`; no release version or tag was created manually.
+- [`conflict-aware-mutation@0.1.1`](https://www.npmjs.com/package/conflict-aware-mutation/v/0.1.1) was published from that exact tag through the documented one-time interactive bootstrap with npm 2FA.
+- Validation from the release tag passed: typecheck, all 53 tests, tarball dry-run, and exact consumer-tarball verification.
+- A clean consumer installed the registry package. Runtime imports and a merge example passed; an independent TypeScript consumer compiled against its declarations.
+- The registry integrity matches the locally verified release artifact. `npm audit signatures` verified the package's registry signature. The registry has no provenance attestation for this one-time bootstrap publication; `publishConfig.provenance: false` was the documented exception.
 
-- `pr-title`
-- `test (22)`
-- `test (24)`
-- `package (22)`
-- `package (24)`
+## Remaining work
 
-The package jobs install and exercise the packed tarball. Reconfirm the names if the workflow job names change.
+- **npm Trusted Publishing:** configuration is not yet verified. Required values are owner `mo-hawary`, repository `conflict-aware-mutation-CAM`, workflow `publish-npm.yml`, and environment `npm`. npm rejected the current setup attempt with `EOTP`; it needs account-owner 2FA authorization.
+- **Provenance for normal releases:** restore `publishConfig.provenance: true` in a checked PR before the next release, then verify the trusted-publishing workflow against the registry.
+- **Published README:** the v0.1.1 npm page still displays the stale README from its release tag. The README cleanup PR updates GitHub and is intentionally docs-only, so it will not create a release. npm displays the README from a published package version; a separate Release Please-generated patch release is required to refresh the npm page. Verify that page after publication.
 
-## Publication gates
+## Launch references
 
-- **Verified:** main's `package.json` has no `private` flag and sets `publishConfig.provenance` to `false` for the documented one-time bootstrap exception.
-- **Verified:** authenticated npm account is `mo-hawary`; two-factor authentication is enabled for authentication and writes.
-- **Registry check:** `conflict-aware-mutation` has no package record visible in the authenticated npm session (`npm view` returned `E404`). The first real publish remains the definitive check that the unscoped name can be claimed.
-- **Pending:** Release Please must create its own release PR. The release PR and resulting tag determine the exact version; `0.1.1` remains the current expectation, not a manual version instruction.
-- **Pending:** run tests and package verification from the exact generated release tag, then perform the one-time interactive public npm publish with 2FA. A dry-run is not publication evidence.
-- **Pending:** configure npm Trusted Publishing for `mo-hawary/conflict-aware-mutation-CAM`, workflow `publish-npm.yml`, environment `npm`.
-- **Pending:** restore `publishConfig.provenance: true` through a checked PR before the next normal release.
-- **Pending:** verify the published package by clean consumer install, imports/types, registry integrity and signatures, and the documented bootstrap provenance exception.
+- [README](./README.md) — installation, runnable quick start, API behavior, and development commands.
+- [Release guide](./RELEASING.md)
+- [Security policy](./SECURITY.md)
+- [Contribution guide](./CONTRIBUTING.md)
