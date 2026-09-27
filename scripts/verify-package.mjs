@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -189,6 +189,16 @@ void result
   run(process.execPath, [path.join(repoRoot, "node_modules", "typescript", "bin", "tsc"), "-p", "tsconfig.json"], {
     cwd: consumerDir,
   })
+
+  // Retain only the artifact that passed the isolated consumer checks.
+  if (process.env.CAM_RELEASE_DIR) {
+    const destination = path.resolve(process.env.CAM_RELEASE_DIR)
+    mkdirSync(destination, { recursive: true })
+    copyFileSync(tarball, path.join(destination, "package.tgz"))
+    writeFileSync(path.join(destination, "package.json"), JSON.stringify({
+      name: packed.name, version: packed.version, integrity: packed.integrity,
+    }))
+  }
 
   console.log("Package verification passed")
   console.log("npm pack --dry-run")

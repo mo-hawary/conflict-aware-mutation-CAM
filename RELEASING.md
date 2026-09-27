@@ -94,3 +94,11 @@ See `OPEN_SOURCE_LAUNCH.md` for the current verified/pending control status.
 - npm provenance: https://docs.npmjs.com/generating-provenance-statements/
 - npm staged publishing: https://docs.npmjs.com/staged-publishing/
 - GitHub `GITHUB_TOKEN` event behavior: https://docs.github.com/actions/how-tos/writing-workflows/choosing-when-your-workflow-runs/triggering-a-workflow
+
+## Artifact identity and reruns
+
+All versions share one package-wide publication concurrency group. GitHub concurrency serializes running jobs; it does not guarantee FIFO ordering or retain every pending run. Redispatch an existing release if its pending run was superseded.
+
+The consumer verifier retains its tested tarball outside the repository. Publication sends those exact bytes with lifecycle scripts disabled, avoiding a rebuild after validation. Both new publications and already-published reruns compare registry name, version, and SHA-512 integrity with that artifact before registry installation.
+
+Registry verification requires npm's cryptographically verified provenance record for the exact package/version, in addition to successful signature auditing. Missing provenance is allowed only for an already-published bootstrap release whose tagged package.json explicitly sets publishConfig.provenance to false. Such a release cannot be newly published by this OIDC workflow. The exception never bypasses artifact integrity or registry signature verification.

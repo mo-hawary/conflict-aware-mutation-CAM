@@ -16,7 +16,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: npm-publish-${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+  group: npm-publish-conflict-aware-mutation
   cancel-in-progress: false
 
 jobs:
@@ -98,6 +98,8 @@ jobs:
         run: npm test
 
       - name: Verify exact consumer tarball
+        env:
+          CAM_RELEASE_DIR: ${{ runner.temp }}/cam-release
         run: npm run package:verify
 
       - name: Check registry version
@@ -129,7 +131,9 @@ jobs:
 
       - name: Publish with npm Trusted Publishing
         if: steps.registry.outputs.already_published != 'true'
-        run: npm publish --access public --provenance
+        run: |
+          node -e 'if (JSON.parse(require("fs").readFileSync("package.json")).publishConfig?.provenance !== true) throw Error("Bootstrap releases must be published interactively; OIDC requires provenance: true")'
+          npm publish "$RUNNER_TEMP/cam-release/package.tgz" --ignore-scripts --access public --provenance
 
       - name: Verify registry artifact
         env:
@@ -137,12 +141,16 @@ jobs:
           PACKAGE_VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
+          npm view "$PACKAGE_NAME@$PACKAGE_VERSION" --json > "$RUNNER_TEMP/cam-release/registry.json"
+          node scripts/verify-registry.mjs metadata "$RUNNER_TEMP/cam-release"
+          SCRIPT="$GITHUB_WORKSPACE/scripts/verify-registry.mjs"
           VERIFY_DIR="$(mktemp -d)"
           trap 'rm -rf "$VERIFY_DIR"' EXIT
           cd "$VERIFY_DIR"
           npm init -y >/dev/null
           npm install --ignore-scripts --save-exact "$PACKAGE_NAME@$PACKAGE_VERSION"
-          npm audit signatures
+          npm audit signatures --json --include-attestations > "$RUNNER_TEMP/cam-release/audit.json"
+          node "$SCRIPT" provenance "$RUNNER_TEMP/cam-release" "$GITHUB_WORKSPACE/package.json"
           node --input-type=module <<'NODE'
           import assert from "node:assert/strict"
           const pkg = await import(process.env.PACKAGE_NAME)
