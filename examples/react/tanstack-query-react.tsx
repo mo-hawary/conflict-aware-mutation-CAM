@@ -91,7 +91,11 @@ function Editor({ id, api, original }: { id: string; api: OrderApi; original: Lo
     try {
       const saved = await save.mutateAsync(variables)
       setBaseline(saved)
-      if (revisionRef.current === variables.revision) setDraft(saved.state)
+      setDraft((current) =>
+        revisionRef.current === variables.revision
+          ? saved.state
+          : { ...saved.state, notes: current.notes },
+      )
       setPending(null)
     } catch (error) {
       if (error instanceof ConflictNeedsDecision) {

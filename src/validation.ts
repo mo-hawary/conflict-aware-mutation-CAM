@@ -86,10 +86,13 @@ export function normalizeErrorOutput(value: unknown): ErrorOutput {
 /**
  * Validates `value` as CAM v1 JSON and returns a private deep copy.
  *
- * Like `JSON.stringify`, only own enumerable properties are part of the
- * snapshot; non-enumerable ones are ignored and their getters never run.
- * Each included value is read once, through its own data descriptor, and the merge only ever sees the
- * copy, so a getter or proxy cannot make it differ from what was validated.
+ * For objects, only own enumerable properties are part of the snapshot, as
+ * with `JSON.stringify`; non-enumerable properties are ignored and their
+ * getters never run. Arrays require every index to be enumerable, so
+ * non-enumerable array indices are rejected even though `JSON.stringify`
+ * visits array slots by index. Each included value is read once, through its
+ * own data descriptor, and the merge only ever sees the copy, so a getter or
+ * proxy cannot make it differ from what was validated.
  * The copy is canonical: object keys are inserted in sorted order and `-0`
  * becomes `0`, so two snapshots with the same key set enumerate keys in the
  * same order.

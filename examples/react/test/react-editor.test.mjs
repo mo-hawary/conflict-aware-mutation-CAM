@@ -173,6 +173,43 @@ test("preserves edits made while a save is pending and prevents duplicate reques
   assert.equal(puts[1].state.notes, "typed while saving")
 })
 
+test("automatic merge adopts server changes and preserves notes typed during the save", async () => {
+  const fetchQueue = [
+    loaded(order(), "e1"),
+    loaded(order({ status: "approved" }), "e2"),
+  ]
+  const puts = []
+  let finishAutomaticSave
+  const automaticSave = new Promise((resolveSaved) => { finishAutomaticSave = resolveSaved })
+  const api = {
+    fetchOrder: async () => fetchQueue.shift(),
+    putOrder: async (_id, state, etag) => {
+      puts.push({ state: structuredClone(state), etag })
+      if (puts.length === 1) throw staleWrite()
+      if (puts.length === 2) return automaticSave
+      return loaded(structuredClone(state), "e4")
+    },
+  }
+  const entry = await mountEditor("one", api)
+  changeNotes(entry, "submitted notes")
+
+  fireEvent.submit(entry.container.querySelector("form"))
+  await waitForPuts(puts, 2)
+  assert.equal(puts[1].etag, "e2")
+  assert.equal(puts[1].state.status, "approved", "the automatic merge saves the server-only change")
+
+  changeNotes(entry, "newer notes")
+  finishAutomaticSave(loaded(puts[1].state, "e3"))
+  await waitFor(() => assert.equal(button(entry, "Save").disabled, false))
+  assert.equal(notesInput(entry).value, "newer notes")
+
+  await submit(entry)
+  await waitForPuts(puts, 3)
+  assert.equal(puts[2].etag, "e3", "the next save uses the automatically saved ETag")
+  assert.equal(puts[2].state.status, "approved", "the next save retains the server change")
+  assert.equal(puts[2].state.notes, "newer notes", "the next save retains newer typing")
+})
+
 test("switching record IDs starts a fresh draft and ETag session", async () => {
   const puts = []
   const api = {
@@ -228,6 +265,47 @@ test("applying choices awaits the save, refreshes editor state, and updates cach
   assert.equal(puts[1].state.notes, "mine")
   assert.equal(entry.container.querySelector("fieldset"), null, "success clears the conflict")
   assert.equal(notesInput(entry).value, "mine")
+})
+
+test("conflict resolution adopts the saved server state and preserves notes typed while pending", async () => {
+  const fetchQueue = [
+    loaded(order({ notes: "original" }), "e1"),
+    loaded(order({ status: "approved", notes: "server" }), "e2"),
+  ]
+  const puts = []
+  let finishResolution
+  const resolution = new Promise((resolveSaved) => { finishResolution = resolveSaved })
+  const api = {
+    fetchOrder: async () => fetchQueue.shift(),
+    putOrder: async (_id, state, etag) => {
+      puts.push({ state: structuredClone(state), etag })
+      if (puts.length === 1) throw staleWrite()
+      if (puts.length === 2) return resolution
+      return loaded(structuredClone(state), "e4")
+    },
+  }
+  const entry = await mountEditor("one", api)
+  changeNotes(entry, "mine")
+  await submit(entry)
+  await waitFor(() => assert.equal(radioInputs(entry).length, 2))
+
+  fireEvent.click(radioInputs(entry)[0])
+  await applyChoices(entry)
+  await waitForPuts(puts, 2)
+  assert.equal(puts[1].etag, "e2")
+  assert.equal(puts[1].state.status, "approved", "the resolution starts from the current server state")
+  changeNotes(entry, "newer notes")
+
+  finishResolution(loaded(puts[1].state, "e3"))
+  await waitFor(() => assert.equal(button(entry, "Save").disabled, false))
+  assert.equal(notesInput(entry).value, "newer notes")
+  assert.equal(entry.container.querySelector("fieldset"), null)
+
+  await submit(entry)
+  await waitForPuts(puts, 3)
+  assert.equal(puts[2].etag, "e3", "the next save uses the conflict-resolution ETag")
+  assert.equal(puts[2].state.status, "approved", "the next save retains the server change")
+  assert.equal(puts[2].state.notes, "newer notes", "the next save retains newer typing")
 })
 
 test("reports a network failure without a code as a save error", async () => {

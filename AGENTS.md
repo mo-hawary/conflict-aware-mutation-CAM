@@ -61,14 +61,14 @@ Reject in v1:
 - cyclic references
 - `NaN`
 - `Infinity` / `-Infinity`
-- accessor (getter/setter) properties, rejected without invoking them
+- enumerable object accessors and array-index accessors, rejected without invoking them
 - `Array` subclasses, sparse arrays, and arrays with extra enumerable non-index properties
 
-Non-enumerable properties are ignored, as with `JSON.stringify`, and their getters are never invoked.
+Non-enumerable own object properties are ignored, as with `JSON.stringify`, and their getters are never invoked. Array indices must be enumerable: CAM rejects non-enumerable array indices even though `JSON.stringify` serializes array slots by position. Non-enumerable extra array properties are ignored.
 
 Validation reads every included property exactly once, through its own data descriptor, into a private snapshot. Merging operates only on that snapshot, so a proxy or getter cannot make the merged value differ from the validated value.
 
-Migration note: `CAMConfigError` now extends `Error` directly rather than `TypeError`. Consumers should use `instanceof CAMConfigError` or `error.code === "CAM_CONFIG_ERROR"` to detect invalid CAM inputs. Validation rejects enumerable accessor properties, `Array` subclasses, sparse arrays, and arrays with extra properties; callers should normalize those values to plain JSON data first.
+Migration note: `CAMConfigError` now extends `Error` directly rather than `TypeError`. Consumers should use `instanceof CAMConfigError` or `error.code === "CAM_CONFIG_ERROR"` to detect invalid CAM inputs. Validation rejects enumerable object accessors and array-index accessors, `Array` subclasses, sparse arrays, non-enumerable array indices, and arrays with extra enumerable non-index properties; callers should normalize those values to plain JSON data first.
 
 Null-prototype objects are accepted; output objects always use `Object.prototype`. Shared (non-cyclic) references are treated as independent copies, as `JSON.stringify` would.
 

@@ -456,7 +456,7 @@ test("rejects accessor properties without invoking them", () => {
 })
 
 test("ignores non-enumerable properties without invoking them", () => {
-  // Matches JSON.stringify: non-enumerable properties are not part of the data.
+  // For ordinary object properties, CAM matches JSON.stringify: non-enumerables are not part of the data.
   let reads = 0
   const withHidden = { a: 0 }
   Object.defineProperty(withHidden, "getter", {
@@ -548,6 +548,17 @@ test("ignores non-enumerable extra array properties", () => {
   assert.deepEqual(
     mergeStates({ originalState: { items: [1] }, submittedState: { items }, currentServerState: { items: [1] } }),
     { ok: true, value: { items: [1, 2] }, conflicts: [] },
+  )
+})
+
+test("rejects non-enumerable array indices even though JSON.stringify serializes them", () => {
+  const items = [1]
+  Object.defineProperty(items, "0", { enumerable: false })
+
+  assert.equal(JSON.stringify(items), "[1]")
+  assert.throws(
+    () => mergeStates({ originalState: { items: [1] }, submittedState: { items }, currentServerState: { items: [1] } }),
+    (error) => error instanceof CAMConfigError && /without holes or extra properties/.test(error.message),
   )
 })
 

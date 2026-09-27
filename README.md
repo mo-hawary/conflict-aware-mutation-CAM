@@ -22,9 +22,10 @@ CAM supports deeply nested JSON objects, including records keyed by IDs. It recu
 | Arrays, including arrays of objects | Yes | Atomic at the array path; no element-by-element merge |
 | Property additions and deletions | Yes | Compared per object property; absence is distinct from `null` |
 | `Date`, `Map`, `Set`, class instances, `BigInt`, `undefined`, functions, symbols, non-finite numbers | No | Rejected with `CAMConfigError` |
-| Sparse arrays, `Array` subclasses, arrays with extra properties, and symbol-keyed properties | No | Rejected with `CAMConfigError` |
-| Getter/setter (accessor) properties | No | Rejected with `CAMConfigError` without being invoked |
-| Non-enumerable properties | Ignored | Not part of the JSON data, as with `JSON.stringify`; getters are never invoked |
+| Sparse arrays, `Array` subclasses, arrays with extra enumerable non-index properties, and symbol-keyed properties | No | Rejected with `CAMConfigError` |
+| Enumerable object accessors and array-index accessors | No | Rejected with `CAMConfigError` without being invoked |
+| Non-enumerable object properties | Ignored | Excluded as with `JSON.stringify`; getters are never invoked |
+| Non-enumerable array indices | No | Rejected; CAM requires enumerable array indices, although `JSON.stringify` serializes array slots by index regardless of enumerability |
 | Cyclic references | No | Rejected with `CAMConfigError` |
 | Nesting deeper than 512 levels | No | Rejected with `CAMConfigError` |
 
@@ -281,7 +282,7 @@ CAM reads each included property once, through its own data descriptor, into a p
 
 `CAMConfigError` now extends `Error` directly instead of `TypeError`. Replace `error instanceof TypeError` checks for invalid CAM inputs with `error instanceof CAMConfigError`, or check `error.code === "CAM_CONFIG_ERROR"`. The class and code distinguish public validation failures from internal `TypeError` invariant failures.
 
-Validation now rejects enumerable getter/setter properties without invoking them, as well as `Array` subclasses, sparse arrays, and arrays with extra properties. Normalize these inputs into plain JSON data before calling CAM. Non-enumerable properties are ignored, as with `JSON.stringify`.
+Validation now rejects enumerable object accessors and array-index accessors without invoking them, as well as `Array` subclasses, sparse arrays, non-enumerable array indices, and arrays with extra enumerable non-index properties. Normalize these inputs into plain JSON data before calling CAM. Non-enumerable object properties are ignored, as with `JSON.stringify`; array indices must be enumerable even though `JSON.stringify` serializes them by position.
 
 ### TypeScript notes
 
