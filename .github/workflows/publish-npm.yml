@@ -38,6 +38,7 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+          package-manager-cache: false
 
       - name: Pin npm CLI
         run: npm install --global npm@11.20.0
