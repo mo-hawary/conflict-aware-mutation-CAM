@@ -436,3 +436,212 @@ test("accepts identical array changes on both sides", () => {
     { ok: true, value: { items: [1, 2] }, conflicts: [] },
   )
 })
+
+test("rejects accessor properties without invoking them", () => {
+  let reads = 0
+  const withGetter = { a: 0 }
+  Object.defineProperty(withGetter, "b", {
+    enumerable: true,
+    get: () => {
+      reads += 1
+      return 1
+    },
+  })
+
+  assert.throws(
+    () => mergeStates({ originalState: { a: 0 }, submittedState: withGetter, currentServerState: { a: 0 } }),
+    (error) => error instanceof CAMConfigError && /accessor/.test(error.message),
+  )
+  assert.equal(reads, 0)
+})
+
+test("ignores non-enumerable properties without invoking them", () => {
+  // For ordinary object properties, CAM matches JSON.stringify: non-enumerables are not part of the data.
+  let reads = 0
+  const withHidden = { a: 0 }
+  Object.defineProperty(withHidden, "getter", {
+    get: () => {
+      reads += 1
+      return 1
+    },
+  })
+  Object.defineProperty(withHidden, "data", { value: "hidden" })
+
+  assert.deepEqual(
+    mergeStates({ originalState: { a: 0 }, submittedState: withHidden, currentServerState: { a: 0 } }),
+    { ok: true, value: { a: 0 }, conflicts: [] },
+  )
+  assert.equal(reads, 0)
+})
+
+test("rejects accessor array elements", () => {
+  const items = [1, 2]
+  Object.defineProperty(items, 0, { enumerable: true, get: () => 1 })
+
+  assert.throws(
+    () => mergeStates({ originalState: { items: [1, 2] }, submittedState: { items }, currentServerState: { items: [1, 2] } }),
+    CAMConfigError,
+  )
+})
+
+test("merges exactly the value it validated", () => {
+  // A proxy can change what it reports between descriptor lookups. The merge
+  // must use the private value captured and validated by this call.
+  let descriptorReads = 0
+  let propertyReads = 0
+  const proxy = new Proxy(
+    { a: 0 },
+    {
+      getOwnPropertyDescriptor(object, key) {
+        descriptorReads += 1
+        return { ...Reflect.getOwnPropertyDescriptor(object, key), value: `captured-${descriptorReads}` }
+      },
+      get: () => {
+        propertyReads += 1
+        return "read-through-proxy"
+      },
+    },
+  )
+
+  const result = mergeStates({ originalState: { a: 0 }, submittedState: proxy, currentServerState: { a: 0 } })
+
+  assert.equal(result.ok, true)
+  if (result.ok) assert.equal(result.value.a, `captured-${descriptorReads}`)
+  assert.ok(descriptorReads > 0)
+  assert.equal(propertyReads, 0)
+})
+
+test("rejects a proxy property that disappears after key enumeration", () => {
+  let lookups = 0
+  const proxy = new Proxy({ a: 0 }, {
+    getOwnPropertyDescriptor(target, key) {
+      lookups += 1
+      return lookups === 1 ? Reflect.getOwnPropertyDescriptor(target, key) : undefined
+    },
+  })
+
+  assert.throws(
+    () => mergeStates({ originalState: {}, submittedState: proxy, currentServerState: {} }),
+    (error) =>
+      error instanceof CAMConfigError &&
+      error.message === 'submittedState["a"] changed during validation',
+  )
+})
+
+test("rejects Array subclasses and arrays with extra properties", () => {
+  class TaggedArray extends Array {}
+  const extra = [1]
+  extra.label = "x"
+
+  for (const items of [TaggedArray.from([1]), extra]) {
+    assert.throws(
+      () => mergeStates({ originalState: { items: [1] }, submittedState: { items }, currentServerState: { items: [1] } }),
+      CAMConfigError,
+    )
+  }
+})
+
+test("ignores non-enumerable extra array properties", () => {
+  const items = [1, 2]
+  Object.defineProperty(items, "label", { value: "hidden" })
+
+  assert.deepEqual(
+    mergeStates({ originalState: { items: [1] }, submittedState: { items }, currentServerState: { items: [1] } }),
+    { ok: true, value: { items: [1, 2] }, conflicts: [] },
+  )
+})
+
+test("rejects non-enumerable array indices even though JSON.stringify serializes them", () => {
+  const items = [1]
+  Object.defineProperty(items, "0", { enumerable: false })
+
+  assert.equal(JSON.stringify(items), "[1]")
+  assert.throws(
+    () => mergeStates({ originalState: { items: [1] }, submittedState: { items }, currentServerState: { items: [1] } }),
+    (error) => error instanceof CAMConfigError && /without holes or extra properties/.test(error.message),
+  )
+})
+
+test("rejects sparse arrays without relying on enumerable keys", () => {
+  const items = new Array(1)
+
+  assert.throws(
+    () => mergeStates({ originalState: { items: [] }, submittedState: { items }, currentServerState: { items: [] } }),
+    (error) => error instanceof CAMConfigError && /holes/.test(error.message),
+  )
+})
+
+test("accepts null-prototype objects", () => {
+  const submittedState = Object.assign(Object.create(null), { a: 2 })
+
+  assert.deepEqual(
+    mergeStates({ originalState: { a: 1 }, submittedState, currentServerState: { a: 1 } }),
+    { ok: true, value: { a: 2 }, conflicts: [] },
+  )
+})
+
+test("reports a very large number of conflicts without overflowing the stack", () => {
+  const size = 200_000
+  const build = (value) => {
+    const object = {}
+    for (let index = 0; index < size; index += 1) object[`k${index}`] = value(index)
+    return object
+  }
+
+  const result = mergeStates({
+    originalState: { nested: build((index) => index) },
+    submittedState: { nested: build((index) => -index - 1) },
+    currentServerState: { nested: build((index) => index + 1e6) },
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.conflicts.length, size)
+})
+
+test("normalizes -0 to 0 in merged output", () => {
+  const result = mergeStates({
+    originalState: { n: 1 },
+    submittedState: { n: -0 },
+    currentServerState: { n: 1 },
+  })
+
+  assert.ok(Object.is(result.value.n, 0))
+})
+
+test("formats validation paths unambiguously for keys with dots", () => {
+  assert.throws(
+    () => mergeStates({ originalState: { "a.b": [1, undefined] }, submittedState: {}, currentServerState: {} }),
+    (error) =>
+      error instanceof CAMConfigError &&
+      error.message.startsWith('originalState["a.b"][1] '),
+  )
+})
+
+test("sorts conflicts lexicographically even for integer-like keys", () => {
+  const result = mergeStates({
+    originalState: { 10: 0, 9: 0, a: 0 },
+    submittedState: { 10: 1, 9: 1, a: 1 },
+    currentServerState: { 10: 2, 9: 2, a: 2 },
+  })
+
+  assert.deepEqual(result.conflicts.map((conflict) => conflict.path), [["10"], ["9"], ["a"]])
+})
+
+test("CAMConfigError is an Error but not a TypeError", () => {
+  const error = new CAMConfigError("bad input")
+
+  assert.ok(error instanceof Error)
+  assert.equal(error instanceof TypeError, false)
+  assert.equal(error.name, "CAMConfigError")
+  assert.equal(error.code, "CAM_CONFIG_ERROR")
+})
+
+test("rejects a sparse array whose extra property hides the hole count", () => {
+  const items = [1, , 3] // eslint-disable-line no-sparse-arrays
+  items.extra = 1
+
+  assert.throws(
+    () => mergeStates({ originalState: { items: [1, 2, 3] }, submittedState: { items }, currentServerState: { items: [1, 2, 3] } }),
+    (error) => error instanceof CAMConfigError && error.message.startsWith('submittedState["items"][1] ') && /holes/.test(error.message),
+  )
+})

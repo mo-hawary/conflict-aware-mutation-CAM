@@ -6,230 +6,158 @@ import type {
   MergeStatesInput,
   PathSegment,
 } from "./types.js"
-import { assertJsonValue } from "./validation.js"
+import { defineJsonProperty, snapshotJsonValue } from "./validation.js"
 
-type NodeState =
-  | { exists: false }
-  | { exists: true; value: JsonValue }
+// Marks an absent object property (deletion). A symbol can never appear in a
+// validated JSON snapshot, so it cannot collide with real data.
+const ABSENT: unique symbol = Symbol("cam.absent")
+type Slot = JsonValue | typeof ABSENT
 
-type InternalMergeResult =
-  | { ok: true; state: NodeState }
-  | { ok: false; conflicts: Conflict[] }
+type JsonObject = { [key: string]: JsonValue }
 
-const hasOwn = (value: object, key: string): boolean =>
-  Object.prototype.hasOwnProperty.call(value, key)
-
-const isPlainObject = (
-  value: JsonValue,
-): value is { [key: string]: JsonValue } =>
+const isPlainObject = (value: Slot): value is JsonObject =>
   typeof value === "object" && value !== null && !Array.isArray(value)
 
-function defineSafeProperty(
-  target: { [key: string]: JsonValue },
-  key: string,
-  value: JsonValue,
-): void {
-  Object.defineProperty(target, key, {
-    configurable: true,
-    enumerable: true,
-    writable: true,
-    value,
-  })
-}
-
-function cloneJson(value: JsonValue): JsonValue {
-  if (value === null || typeof value !== "object") {
-    return value
-  }
-
-  if (Array.isArray(value)) {
-    return value.map((item) => cloneJson(item))
-  }
-
-  const clone: { [key: string]: JsonValue } = {}
-  for (const key of Object.keys(value).sort()) {
-    defineSafeProperty(clone, key, cloneJson(value[key]!))
-  }
-
-  return clone
-}
-
+// Operands are canonical snapshots (see snapshotJsonValue): objects with the
+// same key set enumerate keys in the same order, so no sorting is needed.
 function jsonEqual(left: JsonValue, right: JsonValue): boolean {
-  if (left === right) {
-    return true
-  }
+  if (left === right) return true
+  if (typeof left !== "object" || typeof right !== "object") return false
+  if (left === null || right === null) return false
 
-  if (Array.isArray(left) || Array.isArray(right)) {
-    if (!Array.isArray(left) || !Array.isArray(right)) {
-      return false
-    }
-
-    if (left.length !== right.length) {
-      return false
-    }
-
+  if (Array.isArray(left)) {
+    if (!Array.isArray(right) || left.length !== right.length) return false
     for (let index = 0; index < left.length; index += 1) {
-      if (!jsonEqual(left[index]!, right[index]!)) {
-        return false
-      }
+      if (!jsonEqual(left[index]!, right[index]!)) return false
     }
-
     return true
   }
 
-  if (isPlainObject(left) && isPlainObject(right)) {
-    const leftKeys = Object.keys(left).sort()
-    const rightKeys = Object.keys(right).sort()
+  if (Array.isArray(right)) return false
 
-    if (leftKeys.length !== rightKeys.length) {
+  const leftKeys = Object.keys(left)
+  const rightKeys = Object.keys(right)
+  if (leftKeys.length !== rightKeys.length) return false
+
+  for (let index = 0; index < leftKeys.length; index += 1) {
+    const key = leftKeys[index]!
+    if (key !== rightKeys[index] || !jsonEqual(left[key]!, right[key]!)) {
       return false
     }
+  }
+  return true
+}
 
-    for (let index = 0; index < leftKeys.length; index += 1) {
-      const key = leftKeys[index]!
-      if (key !== rightKeys[index] || !jsonEqual(left[key]!, right[key]!)) {
-        return false
-      }
-    }
+function slotEqual(left: Slot, right: Slot): boolean {
+  if (left === ABSENT || right === ABSENT) return left === right
+  return jsonEqual(left, right)
+}
 
-    return true
+const childSlot = (object: JsonObject, key: string): Slot =>
+  Object.hasOwn(object, key) ? object[key]! : ABSENT
+
+const toConflictValue = (slot: Slot): ConflictValue =>
+  slot === ABSENT ? { exists: false } : { exists: true, value: slot }
+
+function sameKeys(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return false
+  }
+  return true
+}
+
+function isSorted(keys: string[]): boolean {
+  for (let index = 1; index < keys.length; index += 1) {
+    if (keys[index - 1]! > keys[index]!) return false
+  }
+  return true
+}
+
+// Returns the sorted union of all keys. The common case (all three sides share
+// one key set) skips the Set; canonical snapshots are already sorted unless
+// they contain integer-like keys, which JS always enumerates first.
+function unionKeys(a: JsonObject, b: JsonObject, c: JsonObject): string[] {
+  const aKeys = Object.keys(a)
+  const bKeys = Object.keys(b)
+  const cKeys = Object.keys(c)
+
+  if (sameKeys(aKeys, bKeys) && sameKeys(aKeys, cKeys)) {
+    return isSorted(aKeys) ? aKeys : aKeys.sort()
   }
 
-  return false
+  const keys = new Set(aKeys)
+  for (const key of bKeys) keys.add(key)
+  for (const key of cKeys) keys.add(key)
+  return Array.from(keys).sort()
 }
 
-function stateEqual(left: NodeState, right: NodeState): boolean {
-  if (!left.exists || !right.exists) {
-    return left.exists === right.exists
-  }
-
-  return jsonEqual(left.value, right.value)
-}
-
-function cloneState(state: NodeState): NodeState {
-  return state.exists
-    ? { exists: true, value: cloneJson(state.value) }
-    : { exists: false }
-}
-
-function toConflictValue(state: NodeState): ConflictValue {
-  return state.exists
-    ? { exists: true, value: cloneJson(state.value) }
-    : { exists: false }
-}
-
-function childState(
-  object: { [key: string]: JsonValue },
-  key: string,
-): NodeState {
-  return hasOwn(object, key)
-    ? { exists: true, value: object[key]! }
-    : { exists: false }
-}
-
-function mergeNode(
-  original: NodeState,
-  submitted: NodeState,
-  currentServer: NodeState,
+/**
+ * Merges one path. Returns the merged slot; on a true conflict it records the
+ * conflict and returns ABSENT (the caller discards the whole result whenever
+ * any conflict was recorded).
+ *
+ * Inputs are private snapshots, so returned subtrees are used as-is without
+ * cloning. Each snapshot node is placed in the output at most once.
+ */
+function mergeSlot(
+  original: Slot,
+  submitted: Slot,
+  currentServer: Slot,
   path: PathSegment[],
-): InternalMergeResult {
-  if (stateEqual(submitted, original)) {
-    return { ok: true, state: cloneState(currentServer) }
-  }
-
-  if (stateEqual(currentServer, original)) {
-    return { ok: true, state: cloneState(submitted) }
-  }
-
-  if (stateEqual(submitted, currentServer)) {
-    return { ok: true, state: cloneState(submitted) }
-  }
-
-  if (
-    original.exists &&
-    submitted.exists &&
-    currentServer.exists &&
-    isPlainObject(original.value) &&
-    isPlainObject(submitted.value) &&
-    isPlainObject(currentServer.value)
-  ) {
-    const keys = Array.from(
-      new Set([
-        ...Object.keys(original.value),
-        ...Object.keys(submitted.value),
-        ...Object.keys(currentServer.value),
-      ]),
-    ).sort()
-
-    const merged: { [key: string]: JsonValue } = {}
-    const conflicts: Conflict[] = []
-
-    for (const key of keys) {
-      const result = mergeNode(
-        childState(original.value, key),
-        childState(submitted.value, key),
-        childState(currentServer.value, key),
-        [...path, key],
+  conflicts: Conflict[],
+): Slot {
+  // When all three sides are objects, recursing directly is equivalent to the
+  // whole-value checks below and avoids comparing each subtree twice.
+  if (isPlainObject(original) && isPlainObject(submitted) && isPlainObject(currentServer)) {
+    const merged: JsonObject = {}
+    for (const key of unionKeys(original, submitted, currentServer)) {
+      path.push(key)
+      const child = mergeSlot(
+        childSlot(original, key),
+        childSlot(submitted, key),
+        childSlot(currentServer, key),
+        path,
+        conflicts,
       )
-
-      if (!result.ok) {
-        conflicts.push(...result.conflicts)
-        continue
-      }
-
-      if (result.state.exists) {
-        defineSafeProperty(merged, key, result.state.value)
-      }
+      path.pop()
+      if (child !== ABSENT) defineJsonProperty(merged, key, child)
     }
-
-    if (conflicts.length > 0) {
-      return { ok: false, conflicts }
-    }
-
-    return { ok: true, state: { exists: true, value: merged } }
+    return merged
   }
 
-  return {
-    ok: false,
-    conflicts: [
-      {
-        path: [...path],
-        submitted: toConflictValue(submitted),
-        currentServer: toConflictValue(currentServer),
-      },
-    ],
-  }
+  if (slotEqual(submitted, original)) return currentServer
+  if (slotEqual(currentServer, original)) return submitted
+  if (slotEqual(submitted, currentServer)) return submitted
+
+  conflicts.push({
+    path: path.slice(),
+    submitted: toConflictValue(submitted),
+    currentServer: toConflictValue(currentServer),
+  })
+  return ABSENT
 }
 
 export function mergeStates<T extends JsonValue>(
   input: MergeStatesInput<T>,
 ): MergeResult<T> {
-  assertJsonValue(input.originalState, "originalState")
-  assertJsonValue(input.submittedState, "submittedState")
-  assertJsonValue(input.currentServerState, "currentServerState")
-
-  const result = mergeNode(
-    { exists: true, value: input.originalState },
-    { exists: true, value: input.submittedState },
-    { exists: true, value: input.currentServerState },
-    [],
+  const originalState = snapshotJsonValue(input.originalState, "originalState")
+  const submittedState = snapshotJsonValue(input.submittedState, "submittedState")
+  const currentServerState = snapshotJsonValue(
+    input.currentServerState,
+    "currentServerState",
   )
 
-  if (!result.ok) {
-    return {
-      ok: false,
-      kind: "conflict",
-      conflicts: result.conflicts,
-    }
+  const conflicts: Conflict[] = []
+  const merged = mergeSlot(originalState, submittedState, currentServerState, [], conflicts)
+
+  if (conflicts.length > 0) {
+    return { ok: false, kind: "conflict", conflicts }
   }
 
-  if (!result.state.exists) {
+  if (merged === ABSENT) {
     throw new TypeError("CAM internal error: root merge result cannot be absent")
   }
 
-  return {
-    ok: true,
-    value: result.state.value as T,
-    conflicts: [],
-  }
+  return { ok: true, value: merged as T, conflicts: [] }
 }

@@ -60,6 +60,15 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Runtime smoke tests
+        run: node test/runtime/run.mjs
+
+      - name: Coverage thresholds
+        run: npm run test:coverage
+
+      - name: Examples
+        run: npm run examples
+
   package:
     needs: test
     runs-on: ubuntu-latest
@@ -85,3 +94,100 @@ jobs:
 
       - name: Verify installed consumer package
         run: npm run package:verify
+
+      - name: Lint package exports and types
+        run: npm run lint:package
+
+      - name: Bundle size budget
+        run: npm run size
+
+  runtimes:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.x
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Smoke test in Deno
+        run: deno run --allow-read test/runtime/run.mjs
+
+      - name: Smoke test in Bun
+        run: bun test/runtime/run.mjs
+
+      # Playwright is installed only for this job; it is not a project dependency.
+      - name: Install Playwright browsers
+        run: |
+          npm install --no-save playwright@1.63.0
+          npx playwright install --with-deps chromium firefox webkit
+
+      - name: Smoke test in Chromium, Firefox, and WebKit
+        run: node test/runtime/browser.mjs
+
+  react-example:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Type-check the React example
+        working-directory: examples/react
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+
+  playground:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install root dependencies and build CAM
+        run: npm ci && npm run build
+
+      - name: Build playground
+        working-directory: examples/playground
+        run: npm ci && npm run build

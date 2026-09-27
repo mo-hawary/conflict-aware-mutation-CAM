@@ -37,6 +37,8 @@ A convenience `resolveConflict()` may compose both concerns for callers that alr
 
 v1 is JSON-compatible only.
 
+For the consumer-facing capability matrix and runnable data-shape examples, see [Supported data and merge granularity](./README.md#supported-data-and-merge-granularity) in the README. This file remains the contract; keep the README summary in sync with it.
+
 ```ts
 type JsonPrimitive = string | number | boolean | null
 
@@ -59,6 +61,16 @@ Reject in v1:
 - cyclic references
 - `NaN`
 - `Infinity` / `-Infinity`
+- enumerable object accessors and array-index accessors, rejected without invoking them
+- `Array` subclasses, sparse arrays, and arrays with extra enumerable non-index properties
+
+Non-enumerable own object properties are ignored, as with `JSON.stringify`, and their getters are never invoked. Array indices must be enumerable: CAM rejects non-enumerable array indices even though `JSON.stringify` serializes array slots by position. Non-enumerable extra array properties are ignored.
+
+Validation reads every included property exactly once, through its own data descriptor, into a private snapshot. Merging operates only on that snapshot, so a proxy or getter cannot make the merged value differ from the validated value.
+
+Migration note: `CAMConfigError` now extends `Error` directly rather than `TypeError`. Consumers should use `instanceof CAMConfigError` or `error.code === "CAM_CONFIG_ERROR"` to detect invalid CAM inputs. Validation rejects enumerable object accessors and array-index accessors, `Array` subclasses, sparse arrays, non-enumerable array indices, and arrays with extra enumerable non-index properties; callers should normalize those values to plain JSON data first.
+
+Null-prototype objects are accepted; output objects always use `Object.prototype`. Shared (non-cyclic) references are treated as independent copies, as `JSON.stringify` would.
 
 Property absence represents deletion. Property absence and `null` are distinct states.
 
@@ -257,7 +269,7 @@ Throw for invalid usage/configuration:
 - invalid option value
 - malformed path/config object
 
-Public validation/configuration failures use `CAMConfigError`. Reserve `TypeError` for internal invariant failures.
+Public validation/configuration failures use `CAMConfigError`, which extends `Error` (not `TypeError`) and carries `code: "CAM_CONFIG_ERROR"`. Reserve `TypeError` for internal invariant failures so the two stay distinguishable.
 
 Return `ok: false, kind: "conflict"` only for valid state inputs with a genuine concurrent path collision.
 
@@ -329,8 +341,8 @@ Every bug fix must include a regression test.
 
 - Be prototype-pollution-safe when traversing or constructing objects.
 - Never mutate `originalState`, `submittedState`, or `currentServerState`.
-- Keep output deterministic: merged object keys are always sorted (input key order is not preserved), and conflicts are emitted in sorted path order.
-- Treat `-0` and `0` as equal.
+- Keep output deterministic: construct object keys in sorted order (JavaScript still enumerates integer-index keys first), and emit conflicts in lexicographic path order.
+- Treat `-0` and `0` as equal. Output contains `0`, never `-0`.
 - Reject symbol-keyed properties.
 - Depth strategy for v1: validation rejects nesting deeper than 512 levels with `CAMConfigError`, which bounds all recursive traversal.
 
@@ -381,7 +393,7 @@ Avoid scope expansion unless it directly improves the small conflict-aware mutat
 - Release Please owns normal package version bumps, `.release-please-manifest.json`, generated `CHANGELOG.md` release entries, `vX.Y.Z` tags, and GitHub Releases.
 - Do not manually create or move release tags.
 - Do not bypass the release PR to force a version.
-- Keep `"private": true` until npm Trusted Publishing is configured for the public repository.
+- The initial npm bootstrap is complete. Keep normal publishing on the validated release-tag workflow with provenance enabled; do not repeat the bootstrap exception.
 - Do not add long-lived npm publish tokens when OIDC trusted publishing is available.
 - CI must verify supported Node LTS versions and run a package tarball dry-run.
 

@@ -41,22 +41,11 @@ Create the GitHub environment named `npm` before the first OIDC publication; a r
 
 After Trusted Publishing works, configure npm package access to require 2FA and disallow token-based publishing where appropriate.
 
-## First npm publication: bootstrap exception required
+## Bootstrap history
 
-As of September 27, 2026, npm Trusted Publishing can only be configured for a package that already exists, and npm staged publishing also cannot create a brand-new package. That conflicts with this repository's standing rule to keep `"private": true` until Trusted Publishing is configured.
+The first npm publication was the one-time interactive `0.1.1` bootstrap. It used the release tag and an explicitly approved provenance exception. That procedure is historical, not a step for future releases. The current package configuration enables provenance; normal releases use the trusted-publishing workflow above.
 
-Do **not** silently bypass that rule. The owner must explicitly approve this narrowly scoped bootstrap exception:
-
-1. Complete the pre-public secret/history review and authorize making the GitHub repository public.
-2. In the owner's npm account, with 2FA enabled, confirm that the unscoped name `conflict-aware-mutation` is actually available/owned. An anonymous registry `404` is not ownership proof.
-3. Explicitly approve the one-time bootstrap exception: allow removal of `"private": true` before Trusted Publishing solely to create the real package.
-4. Merge a dedicated bootstrap change that removes `"private": true` **and temporarily sets `publishConfig.provenance` to `false`**. Provenance generation requires supported cloud CI, so leaving the current `provenance: true` setting in place can make the local bootstrap publish fail. Do not manually bump the version. Let the existing Release Please PR update normally.
-5. Merge the Release Please release PR. Given the current `v0.1.0` history and this launch-preparation `fix:` change, the intended first npm version is `0.1.1` unless subsequent merged changes cause Release Please to choose a different version. Verify the actual release PR/tag before publishing.
-6. From the exact `vX.Y.Z` release tag, perform the one-time initial publish interactively using the owner's npm account + 2FA (or another npm-supported short-lived bootstrap credential explicitly approved by the owner). Use direct `npm publish --access public`; do not create a long-lived automation token. This first bootstrap publish cannot use Trusted Publishing or provenance because the package does not exist yet.
-7. Immediately configure the Trusted Publisher fields above for the now-existing package and create/protect the GitHub `npm` environment.
-8. Merge a follow-up change restoring `publishConfig.provenance: true` before the next normal Release Please release. Future versions use `.github/workflows/publish-npm.yml` only. The first fully OIDC/provenance-backed release will therefore be the next Release Please version after the bootstrap publish unless npm changes its first-package bootstrap rules.
-
-Do not create a dummy npm version, move `v0.1.0`, or falsify release history to avoid this sequence.
+See [the launch record](./OPEN_SOURCE_LAUNCH.md) for the dated evidence. Verify account settings and publication results for each actual release rather than treating that snapshot as live status.
 
 ## Failed publication recovery
 
@@ -77,7 +66,7 @@ Before enforcing required checks on Release Please PRs, configure `RELEASE_PLEAS
 
 ## Public repository controls
 
-After public visibility is separately authorized:
+For the public repository, maintain these controls:
 
 - require PRs and the observed Node 22/24 CI checks on `main`
 - protect `v*` tags from update/deletion
@@ -86,7 +75,7 @@ After public visibility is separately authorized:
 - keep squash merge as the normal merge method
 - verify Release Please can create/update its release PR under the enforced rules
 
-See `OPEN_SOURCE_LAUNCH.md` for the current verified/pending control status.
+See `OPEN_SOURCE_LAUNCH.md` for the historical launch snapshot; it is not a live control audit.
 
 ## Revalidated references (2026-09-27)
 
@@ -102,3 +91,13 @@ All versions share one package-wide publication concurrency group. GitHub concur
 The consumer verifier retains its tested tarball outside the repository. Publication sends those exact bytes with lifecycle scripts disabled, avoiding a rebuild after validation. Both new publications and already-published reruns compare registry name, version, and SHA-512 integrity with that artifact before registry installation.
 
 Registry verification requires npm's cryptographically verified provenance record for the exact package/version, in addition to successful signature auditing. Missing provenance is allowed only for an already-published bootstrap release whose tagged package.json explicitly sets publishConfig.provenance to false. Such a release cannot be newly published by this OIDC workflow. The exception never bypasses artifact integrity or registry signature verification.
+
+## Documentation and breaking changes
+
+Before merging a breaking change, include its migration instructions in the squash commit's `BREAKING CHANGE:` footer and link the migration guide. Below 1.0.0 the current configuration normally increments the minor version for a breaking change; review the generated release PR rather than promising a version in advance.
+
+Review the generated changelog and packaged README in the release PR. A docs-only merge updates GitHub but does not itself refresh npm: npm receives the README with the next published package. Keep released changelog entries intact. Verify the published version, README, provenance, and matching immutable tag after publication.
+
+## API documentation
+
+The API reference deploys from `main` through `.github/workflows/docs.yml`. Configure Settings → Pages → Source as **GitHub Actions**. The docs build runs TypeDoc with isolated pinned TypeScript 6 while the project uses TypeScript 7. API docs on `main` can be ahead of the latest npm release; the npm version badge is not a source-version indicator.

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CAM playground</title>
+  </head>
+  <body>
+    <h1>CAM playground</h1>
+    <p>Edit the three JSON states. The <code>mergeStates()</code> result updates as you type.</p>
+
+    <label for="originalState">originalState</label>
+    <textarea id="originalState" rows="8" cols="60"></textarea>
+
+    <label for="submittedState">submittedState</label>
+    <textarea id="submittedState" rows="8" cols="60"></textarea>
+
+    <label for="currentServerState">currentServerState</label>
+    <textarea id="currentServerState" rows="8" cols="60"></textarea>
+
+    <h2>Result</h2>
+    <pre id="result" aria-live="polite"></pre>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

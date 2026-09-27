@@ -1,0 +1,8 @@
+[
+  {
+    "name": "full import",
+    "path": "dist/index.js",
+    "import": "*",
+    "limit": "2 kB"
+  }
+]

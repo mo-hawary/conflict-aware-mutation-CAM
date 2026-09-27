@@ -1,5 +1,7 @@
 # Changelog
 
+Release Please maintains the versioned entries below. Source on `main` may be ahead of the latest release. See the [migration guide](./docs/migration.md) for the validation/error changes following 0.1.x and [RELEASING.md](./RELEASING.md) for versioning policy.
+
 ## [0.1.2](https://github.com/mo-hawary/conflict-aware-mutation-CAM/compare/v0.1.1...v0.1.2) (2026-09-27)
 
 

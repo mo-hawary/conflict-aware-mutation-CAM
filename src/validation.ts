@@ -1,17 +1,23 @@
 import { CAMConfigError } from "./errors.js"
-import type { ErrorOutput, ErrorSignal, JsonValue } from "./types.js"
+import type { ErrorOutput, ErrorSignal, JsonValue, PathSegment } from "./types.js"
 
 const MAX_JSON_DEPTH = 512
 
-const hasOwn = (value: object, key: PropertyKey): boolean =>
-  Object.prototype.hasOwnProperty.call(value, key)
-
 function readOwn(value: object, key: string): unknown {
-  return hasOwn(value, key) ? (value as Record<string, unknown>)[key] : undefined
+  return Object.hasOwn(value, key) ? (value as Record<string, unknown>)[key] : undefined
 }
 
-function formatPath(path: string): string {
-  return path.length > 120 ? `${path.slice(0, 60)}…${path.slice(-40)}` : path
+// Formats a validation path for error messages only. String segments are
+// JSON-quoted so keys containing dots or brackets stay unambiguous.
+function formatPath(label: string, path: readonly PathSegment[]): string {
+  let formatted = label
+  for (const segment of path) {
+    formatted +=
+      typeof segment === "number" ? `[${segment}]` : `[${JSON.stringify(segment)}]`
+  }
+  return formatted.length > 120
+    ? `${formatted.slice(0, 60)}…${formatted.slice(-40)}`
+    : formatted
 }
 
 /**
@@ -77,77 +83,128 @@ export function normalizeErrorOutput(value: unknown): ErrorOutput {
   )
 }
 
-export function assertJsonValue(
-  value: unknown,
-  label = "value",
-): asserts value is JsonValue {
-  const seen = new Set<object>()
+/**
+ * Validates `value` as CAM v1 JSON and returns a private deep copy.
+ *
+ * For objects, only own enumerable properties are part of the snapshot, as
+ * with `JSON.stringify`; non-enumerable properties are ignored and their
+ * getters never run. Arrays require every index to be enumerable, so
+ * non-enumerable array indices are rejected even though `JSON.stringify`
+ * visits array slots by index. Each included value is read once, through its
+ * own data descriptor, and the merge only ever sees the copy, so a getter or
+ * proxy cannot make it differ from what was validated.
+ * The copy is canonical: object keys are inserted in sorted order and `-0`
+ * becomes `0`, so two snapshots with the same key set enumerate keys in the
+ * same order.
+ */
+export function snapshotJsonValue(value: unknown, label = "value"): JsonValue {
+  const ancestors = new Set<object>()
+  const path: PathSegment[] = []
 
-  const visit = (current: unknown, path: string, depth: number): void => {
+  const fail = (reason: string): never => {
+    throw new CAMConfigError(`${formatPath(label, path)} ${reason}`)
+  }
+
+  // `missing` explains a key that has no own property: an array hole, or an
+  // object key a proxy reported and then withdrew.
+  const readData = (source: object, key: string, missing: string): unknown => {
+    const descriptor = Object.getOwnPropertyDescriptor(source, key)
+    if (descriptor === undefined) {
+      return fail(missing)
+    }
+    if (!("value" in descriptor)) {
+      return fail("must not be an accessor (getter/setter) property")
+    }
+    return descriptor.value
+  }
+
+  const visit = (current: unknown, depth: number): JsonValue => {
     if (depth > MAX_JSON_DEPTH) {
-      throw new CAMConfigError(
-        `${formatPath(path)} exceeds CAM's maximum JSON nesting depth of ${MAX_JSON_DEPTH}`,
-      )
+      fail(`exceeds CAM's maximum JSON nesting depth of ${MAX_JSON_DEPTH}`)
     }
 
-    if (current === null) return
+    if (current === null) return null
 
     switch (typeof current) {
       case "string":
       case "boolean":
-        return
+        return current
       case "number":
         if (!Number.isFinite(current)) {
-          throw new CAMConfigError(`${path} must contain only finite numbers`)
+          fail("must contain only finite numbers")
         }
-        return
-      case "undefined":
-      case "bigint":
-      case "function":
-      case "symbol":
-        throw new CAMConfigError(`${path} is not JSON-compatible`)
+        return current === 0 ? 0 : current
       case "object":
         break
       default:
-        throw new CAMConfigError(`${path} is not JSON-compatible`)
+        return fail("is not JSON-compatible")
     }
 
-    const objectValue = current as object
-    if (seen.has(objectValue)) {
-      throw new CAMConfigError(`${path} contains a cyclic reference`)
+    const source = current as object
+    if (ancestors.has(source)) {
+      fail("contains a cyclic reference")
     }
 
-    const prototype = Object.getPrototypeOf(objectValue)
-    if (
-      !Array.isArray(objectValue) &&
-      prototype !== Object.prototype &&
-      prototype !== null
-    ) {
-      throw new CAMConfigError(`${path} must contain only plain objects and arrays`)
+    const isArray = Array.isArray(source)
+    const prototype = Object.getPrototypeOf(source)
+    if (isArray ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) {
+      fail("must contain only plain objects and arrays")
     }
 
-    if (Object.getOwnPropertySymbols(objectValue).length > 0) {
-      throw new CAMConfigError(`${path} must not contain symbol-keyed properties`)
+    if (Object.getOwnPropertySymbols(source).length > 0) {
+      fail("must not contain symbol-keyed properties")
     }
 
-    seen.add(objectValue)
+    const keys = Object.keys(source)
+    ancestors.add(source)
 
-    if (Array.isArray(objectValue)) {
-      for (let index = 0; index < objectValue.length; index += 1) {
-        visit(objectValue[index], `${path}[${index}]`, depth + 1)
+    let copy: JsonValue
+    if (isArray) {
+      const length = (source as unknown[]).length
+      const shape = "must be an array without holes or extra properties"
+      if (keys.length !== length) fail(shape)
+      const items: JsonValue[] = new Array(length)
+      for (let index = 0; index < length; index += 1) {
+        path.push(index)
+        items[index] = visit(readData(source, String(index), shape), depth + 1)
+        path.pop()
       }
+      copy = items
     } else {
-      for (const key of Object.keys(objectValue)) {
-        visit(
-          (objectValue as Record<string, unknown>)[key],
-          `${path}.${key}`,
-          depth + 1,
-        )
+      keys.sort()
+      const object: { [key: string]: JsonValue } = {}
+      for (const key of keys) {
+        path.push(key)
+        defineJsonProperty(object, key, visit(readData(source, key, "changed during validation"), depth + 1))
+        path.pop()
       }
+      copy = object
     }
 
-    seen.delete(objectValue)
+    ancestors.delete(source)
+    return copy
   }
 
-  visit(value, label, 0)
+  return visit(value, 0)
+}
+
+/**
+ * Adds an own enumerable property. Plain assignment is used for every key
+ * except `__proto__`, which would otherwise invoke the prototype setter.
+ */
+export function defineJsonProperty(
+  target: { [key: string]: JsonValue },
+  key: string,
+  value: JsonValue,
+): void {
+  if (key === "__proto__") {
+    Object.defineProperty(target, key, {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value,
+    })
+  } else {
+    target[key] = value
+  }
 }

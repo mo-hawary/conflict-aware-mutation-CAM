@@ -26,3 +26,12 @@ if (result.ok) {
   // @ts-expect-error conflict results never expose a partially merged value
   void result.value
 }
+
+// Documented limitation: interfaces lack an implicit index signature, so they
+// are not assignable to JsonValue. Use a `type` alias instead.
+interface OrderInterface {
+  id: string
+}
+declare const orderInterface: OrderInterface
+// @ts-expect-error interfaces are not assignable to JsonValue
+mergeStates({ originalState: orderInterface, submittedState: orderInterface, currentServerState: orderInterface })
