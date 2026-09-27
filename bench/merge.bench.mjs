@@ -1,5 +1,7 @@
 // Representative mergeStates() benchmarks. Run with `npm run bench`.
-// Set CAM_DIST to a built dist/index.js to benchmark another build.
+// Set CAM_DIST to a built dist/index.js to benchmark another build, and
+// CAM_BENCH_JSON to a file path to also write machine-readable results.
+import { writeFileSync } from "node:fs"
 import { pathToFileURL } from "node:url"
 import { resolve } from "node:path"
 
@@ -9,6 +11,7 @@ const distPath = process.env.CAM_DIST
 const { mergeStates } = await import(distPath)
 
 const BUDGET_MS = Number(process.env.CAM_BENCH_MS ?? 500)
+const results = {}
 
 function bench(name, makeInput) {
   const input = makeInput()
@@ -24,6 +27,7 @@ function bench(name, makeInput) {
   }
 
   const perOp = elapsed / iterations
+  results[name] = perOp
   const formatted = perOp < 1 ? `${(perOp * 1000).toFixed(1)} µs` : `${perOp.toFixed(2)} ms`
   console.log(`${name.padEnd(40)} ${formatted.padStart(12)}/op  (${iterations} runs)`)
 }
@@ -99,3 +103,7 @@ bench("10k conflicts", () => ({
   submittedState: wide(10_000, (index) => -index - 1),
   currentServerState: wide(10_000, (index) => index + 1e6),
 }))
+
+if (process.env.CAM_BENCH_JSON) {
+  writeFileSync(process.env.CAM_BENCH_JSON, `${JSON.stringify(results, null, 2)}\n`)
+}

@@ -37,7 +37,9 @@ ID-keyed records work because IDs are ordinary object keys. CAM does not inspect
 npm install conflict-aware-mutation
 ```
 
-CAM supports Node.js 22 and 24, ships as ESM, and includes TypeScript declarations.
+CAM supports Node.js 22 and 24, ships as ESM, and includes TypeScript declarations. CI also runs smoke tests in Deno, Bun, Chromium, Firefox, and WebKit.
+
+Try it without installing: [open the playground on StackBlitz](https://stackblitz.com/github/mo-hawary/conflict-aware-mutation-CAM/tree/main/examples/playground).
 
 ## Quick start
 
@@ -296,6 +298,7 @@ npm run lint:package    # publint + are-the-types-wrong
 npm run size            # bundle size budget
 npm run examples        # runnable end-to-end example
 npm run bench           # representative mergeStates() benchmarks
+npm run mutation        # Stryker mutation testing (slow)
 ```
 
 Full API reference: <https://mo-hawary.github.io/conflict-aware-mutation-CAM/>. Integration examples, including fetch/REST and TanStack Query with React, are in [`examples/`](./examples/README.md).

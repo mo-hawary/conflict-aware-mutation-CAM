@@ -37,11 +37,13 @@
     "lint:package": "npm run build && publint --strict && attw --pack . --profile esm-only",
     "size": "npm run build && size-limit",
     "examples": "npm run build && node examples/fetch-rest.mjs",
-    "bench": "npm run build && node bench/merge.bench.mjs"
+    "bench": "npm run build && node bench/merge.bench.mjs",
+    "mutation": "stryker run"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "0.18.5",
     "@size-limit/preset-small-lib": "14.1.0",
+    "@stryker-mutator/core": "10.0.0",
     "fast-check": "4.10.2",
     "publint": "0.3.24",
     "size-limit": "14.1.0",

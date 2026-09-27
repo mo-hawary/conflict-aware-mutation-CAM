@@ -1,0 +1,59 @@
+name: Benchmarks
+
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "bench/**"
+      - "tsconfig.json"
+      - "package-lock.json"
+      - ".github/workflows/bench.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Checkout base
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha || 'main' }}
+          path: base
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Build head and base
+        run: |
+          npm ci
+          npm run build
+          (cd base && npm ci && npm run build)
+
+      # Both builds run through the head's benchmark script, so base branches
+      # without bench/ still compare. Runs are interleaved to spread runner noise.
+      - name: Run benchmarks
+        env:
+          CAM_BENCH_MS: "1000"
+        run: |
+          CAM_DIST=base/dist/index.js CAM_BENCH_JSON=base.json node bench/merge.bench.mjs
+          CAM_BENCH_JSON=head.json node bench/merge.bench.mjs
+
+      # Report-only: shared runners are too noisy for a hard gate. Changes over
+      # 25% slower are flagged in the summary and as workflow warnings.
+      - name: Compare
+        run: |
+          {
+            echo "## mergeStates() benchmarks"
+            echo
+            node bench/compare.mjs base.json head.json 0.25
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,11 +1,12 @@
-// Reference only: not built or type-checked in CI (this repo has no React
-// dependency). Shows where CAM fits in a TanStack Query mutation and a minimal,
-// unstyled conflict picker. Adapt the API calls and UI to your application.
+// Where CAM fits in a TanStack Query mutation, plus a minimal, unstyled
+// conflict picker. Type-checked in CI with its own dependencies (see
+// ./package.json); the library itself has no React dependency. Adapt the API
+// calls and UI to your application.
 import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { matchConflictError, mergeStates, type Conflict } from "conflict-aware-mutation"
 
-import { chooseSides } from "./choose-sides.mjs"
+import { chooseSides } from "../choose-sides.mjs"
 
 type Order = { status: string; notes: string; customer: { name: string; phone: string } }
 type Loaded = { state: Order; etag: string }
