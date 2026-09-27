@@ -2,7 +2,7 @@
   "name": "conflict-aware-mutation",
   "shortName": "cam",
   "version": "0.1.1",
-  "description": "Headless three-way conflict resolution for CRUD mutations.",
+  "description": "Resolve stale CRUD writes with safe three-way merges.",
   "author": {
     "name": "Mo Hawary",
     "email": "dev.elhawary@gmail.com",
