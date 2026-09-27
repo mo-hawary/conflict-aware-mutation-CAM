@@ -1,0 +1,152 @@
+name: Publish npm
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing non-draft GitHub release tag to publish (for example v0.1.1)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-publish-${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: npm
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Pin npm CLI
+        run: npm install --global npm@11.20.0
+
+      - name: Validate release identity
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          if ! [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must be an exact vX.Y.Z tag." >&2
+            exit 1
+          fi
+
+          NAME="$(node -p "require('./package.json').name")"
+          VERSION="$(node -p "require('./package.json').version")"
+          PRIVATE="$(node -p "String(require('./package.json').private === true)")"
+
+          if [[ "$PRIVATE" == "true" ]]; then
+            echo "package.json is still private; npm bootstrap/trusted-publisher prerequisites are incomplete." >&2
+            exit 1
+          fi
+
+          if [[ "v$VERSION" != "$RELEASE_TAG" ]]; then
+            echo "package version $VERSION does not match release tag $RELEASE_TAG." >&2
+            exit 1
+          fi
+
+          TAG_SHA="$(git rev-list -n 1 "$RELEASE_TAG")"
+          HEAD_SHA="$(git rev-parse HEAD)"
+          if [[ "$TAG_SHA" != "$HEAD_SHA" ]]; then
+            echo "Checked-out commit does not match the release tag." >&2
+            exit 1
+          fi
+
+          RELEASE_JSON="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")"
+          RELEASE_JSON="$RELEASE_JSON" node <<'NODE'
+          const release = JSON.parse(process.env.RELEASE_JSON)
+          if (release.draft || release.prerelease) {
+            console.error("Only published, non-prerelease GitHub releases may publish npm.")
+            process.exit(1)
+          }
+          NODE
+
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Verify exact consumer tarball
+        run: npm run package:verify
+
+      - name: Check registry version
+        id: registry
+        env:
+          PACKAGE_NAME: ${{ steps.release.outputs.name }}
+          PACKAGE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          ERROR_FILE="$(mktemp)"
+          set +e
+          VIEW="$(npm view "$PACKAGE_NAME@$PACKAGE_VERSION" version --json 2>"$ERROR_FILE")"
+          STATUS=$?
+          set -e
+
+          if [[ $STATUS -eq 0 ]]; then
+            ACTUAL="$(printf '%s' "$VIEW" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(String(JSON.parse(s))))')"
+            if [[ "$ACTUAL" != "$PACKAGE_VERSION" ]]; then
+              echo "Registry returned unexpected version: $ACTUAL" >&2
+              exit 1
+            fi
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+          elif grep -q "E404" "$ERROR_FILE"; then
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+          else
+            cat "$ERROR_FILE" >&2
+            exit "$STATUS"
+          fi
+
+      - name: Publish with npm Trusted Publishing
+        if: steps.registry.outputs.already_published != 'true'
+        run: npm publish --access public --provenance
+
+      - name: Verify registry artifact
+        env:
+          PACKAGE_NAME: ${{ steps.release.outputs.name }}
+          PACKAGE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          VERIFY_DIR="$(mktemp -d)"
+          trap 'rm -rf "$VERIFY_DIR"' EXIT
+          cd "$VERIFY_DIR"
+          npm init -y >/dev/null
+          npm install --ignore-scripts --save-exact "$PACKAGE_NAME@$PACKAGE_VERSION"
+          npm audit signatures
+          node --input-type=module <<'NODE'
+          import assert from "node:assert/strict"
+          const pkg = await import(process.env.PACKAGE_NAME)
+          assert.deepEqual(
+            Object.keys(pkg).sort(),
+            ["CAMConfigError", "matchConflictError", "mergeStates"],
+          )
+          NODE
