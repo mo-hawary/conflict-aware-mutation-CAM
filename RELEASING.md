@@ -50,11 +50,11 @@ Do **not** silently bypass that rule. The owner must explicitly approve this nar
 1. Complete the pre-public secret/history review and authorize making the GitHub repository public.
 2. In the owner's npm account, with 2FA enabled, confirm that the unscoped name `conflict-aware-mutation` is actually available/owned. An anonymous registry `404` is not ownership proof.
 3. Explicitly approve the one-time bootstrap exception: allow removal of `"private": true` before Trusted Publishing solely to create the real package.
-4. Merge a dedicated change removing `"private": true`. Do not manually bump the version. Let the existing Release Please PR update normally.
+4. Merge a dedicated bootstrap change that removes `"private": true` **and temporarily sets `publishConfig.provenance` to `false`**. Provenance generation requires supported cloud CI, so leaving the current `provenance: true` setting in place can make the local bootstrap publish fail. Do not manually bump the version. Let the existing Release Please PR update normally.
 5. Merge the Release Please release PR. Given the current `v0.1.0` history and this launch-preparation `fix:` change, the intended first npm version is `0.1.1` unless subsequent merged changes cause Release Please to choose a different version. Verify the actual release PR/tag before publishing.
-6. From the exact `vX.Y.Z` release tag, perform the one-time initial publish interactively using the owner's npm account + 2FA (or another npm-supported short-lived bootstrap credential explicitly approved by the owner). Do not create a long-lived automation token. This first bootstrap publish cannot use Trusted Publishing because the package does not exist yet.
+6. From the exact `vX.Y.Z` release tag, perform the one-time initial publish interactively using the owner's npm account + 2FA (or another npm-supported short-lived bootstrap credential explicitly approved by the owner). Use direct `npm publish --access public`; do not create a long-lived automation token. This first bootstrap publish cannot use Trusted Publishing or provenance because the package does not exist yet.
 7. Immediately configure the Trusted Publisher fields above for the now-existing package and create/protect the GitHub `npm` environment.
-8. Future versions use `.github/workflows/publish-npm.yml` only. The first fully OIDC/provenance-backed release will therefore be the next Release Please version after the bootstrap publish unless npm changes its first-package bootstrap rules.
+8. Merge a follow-up change restoring `publishConfig.provenance: true` before the next normal Release Please release. Future versions use `.github/workflows/publish-npm.yml` only. The first fully OIDC/provenance-backed release will therefore be the next Release Please version after the bootstrap publish unless npm changes its first-package bootstrap rules.
 
 Do not create a dummy npm version, move `v0.1.0`, or falsify release history to avoid this sequence.
 
@@ -91,5 +91,6 @@ See `OPEN_SOURCE_LAUNCH.md` for the current verified/pending control status.
 ## Revalidated references (2026-09-27)
 
 - npm Trusted Publishing: https://docs.npmjs.com/trusted-publishers/
+- npm provenance: https://docs.npmjs.com/generating-provenance-statements/
 - npm staged publishing: https://docs.npmjs.com/staged-publishing/
 - GitHub `GITHUB_TOKEN` event behavior: https://docs.github.com/actions/how-tos/writing-workflows/choosing-when-your-workflow-runs/triggering-a-workflow
