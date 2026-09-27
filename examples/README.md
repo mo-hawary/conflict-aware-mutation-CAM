@@ -28,6 +28,13 @@ npm ci --prefix examples/playground
 npm run dev --prefix examples/playground
 ```
 
-The React example exports `OrderEditor` and an `OrderApi` interface for your backend implementation. It is a tested integration sketch, not a standalone app. Only notes are editable: after a pending save, it preserves newer notes while adopting other fields from the saved response. If you add editable fields, extend that reconciliation and its behavior tests.
+The React example exports `OrderEditor` and an `OrderApi` interface for your backend implementation. It is a tested integration sketch, not a standalone app. Only notes are editable. The editor handles saves as follows:
+
+- **Ordinary save:** typing stays enabled. When the request succeeds, the draft preserves notes typed during the request and adopts the other fields from the saved response.
+- **Apply conflict choices:** the draft immediately displays the chosen state, including “Theirs.” Notes editing pauses until the resolution request finishes. If the request fails, the chosen draft and conflict picker remain available for retry.
+- **Changed draft:** if you edit after a conflict was detected, save again to refresh the choices before applying them.
+- **Cache update:** immediately before writing a successful response to the cache, the mutation awaits cancellation of the exact `['order', id]` query. This prevents an already-running refetch, including one started during the save, from overwriting that saved response with stale data.
+
+If you add editable fields, extend the draft reconciliation and its behavior tests. Query cancellation protects the client cache; every write still needs the backend's concurrency precondition.
 
 Keep the original state and ETag paired for an editing session. Preserve the backend precondition on each write, handle another stale rejection, and validate merged values against your domain rules.

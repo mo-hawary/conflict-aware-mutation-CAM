@@ -101,3 +101,17 @@ Review the generated changelog and packaged README in the release PR. A docs-onl
 ## API documentation
 
 The API reference deploys from `main` through `.github/workflows/docs.yml`. Configure Settings → Pages → Source as **GitHub Actions**. The docs build runs TypeDoc with isolated pinned TypeScript 6 while the project uses TypeScript 7. API docs on `main` can be ahead of the latest npm release; the npm version badge is not a source-version indicator.
+
+## Automatic approval of release PRs
+
+Automatic approval is intended only for verified Release Please changelog/version PRs. It is not configured yet. The current review rule requires `@mo-hawary` as code owner; the last release PR was also authored by that account. GitHub does not allow authors to approve their own PRs, and an approval from `github-actions[bot]` alone does not satisfy this code-owner requirement.
+
+To enable automatic approval while retaining Mo as the sole code owner:
+
+1. Configure Release Please to create PRs through a separate, narrowly scoped GitHub App identity. Its events must trigger the required CI checks.
+2. Configure a separate approval credential for `@mo-hawary`, scoped to this repository and PR reviews. Do not reuse the release-author credential.
+3. Add an approval workflow running trusted code from the default branch. Verify the release App identity, same-repository head, expected Release Please branch, `main` base, and pending-release label. A title, branch name, or label alone is insufficient proof.
+4. Validate the entire diff: permit only generated changelog, manifest, and package version changes; verify matching versions and reject dependency, script, workflow, source, or unrelated lockfile changes. Never execute PR code with the approval credential.
+5. Require successful CI for the exact current head and submit approval for that commit only. Revalidate each update; stale approvals remain dismissed.
+
+Approval automation does not authorize automatic merging or npm publication. Keep required checks and existing release gates in place. Until the bot identity, credential, and workflow are configured and verified together, release PRs retain the current manual merge process through the owner's existing PR-only review bypass.

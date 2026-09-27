@@ -4,6 +4,7 @@ import type {
   ErrorSignal,
   MatchConflictErrorInput,
 } from "./types.js"
+import { CAMConfigError } from "./errors.js"
 import { normalizeErrorOutput, normalizeErrorSignal } from "./validation.js"
 
 // Both helpers receive normalized signals: plain objects carrying only the
@@ -33,6 +34,10 @@ function withOutput(error: ErrorSignal, output: ErrorOutput): ErrorSignal {
 export function matchConflictError(
   input: MatchConflictErrorInput,
 ): ErrorMatchResult {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    throw new CAMConfigError("matchConflictError input must be an object")
+  }
+
   const error = normalizeErrorSignal(input.error, "error")
   const expectedError = normalizeErrorSignal(input.expectedError, "expectedError")
   const errorOutput = normalizeErrorOutput(input.errorOutput)

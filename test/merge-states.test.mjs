@@ -1,7 +1,14 @@
 import assert from "node:assert/strict"
+import { spawnSync } from "node:child_process"
 import test from "node:test"
 
 import { CAMConfigError, mergeStates } from "../dist/index.js"
+
+test("rejects null and undefined merge arguments with CAMConfigError", () => {
+  for (const input of [null, undefined]) {
+    assert.throws(() => mergeStates(input), CAMConfigError)
+  }
+})
 
 test("keeps a server-only change", () => {
   const result = mergeStates({
@@ -217,6 +224,14 @@ const nest = (depth) => {
   return root
 }
 
+const nestAtDepth = (kind, depth, leaf) => {
+  let value = leaf
+  for (let index = 0; index < depth; index += 1) {
+    value = kind === "object" ? { child: value } : [value]
+  }
+  return value
+}
+
 test("treats -0 and 0 as equal", () => {
   assert.deepEqual(
     mergeStates({
@@ -273,6 +288,29 @@ test("accepts input at the nesting limit", () => {
     mergeStates({ originalState: atLimit, submittedState: atLimit, currentServerState: atLimit }).ok,
     true,
   )
+})
+
+test("counts depth from root for empty and scalar object and array leaves", () => {
+  for (const [kind, leaf] of [
+    ["object", {}],
+    ["object", 0],
+    ["array", []],
+    ["array", 0],
+  ]) {
+    const atLimit = nestAtDepth(kind, 512, leaf)
+    assert.equal(
+      mergeStates({ originalState: atLimit, submittedState: atLimit, currentServerState: atLimit }).ok,
+      true,
+      `${kind} leaf at depth 512 should be accepted`,
+    )
+
+    const beyondLimit = nestAtDepth(kind, 513, leaf)
+    assert.throws(
+      () => mergeStates({ originalState: beyondLimit, submittedState: beyondLimit, currentServerState: beyondLimit }),
+      CAMConfigError,
+      `${kind} leaf at depth 513 should be rejected`,
+    )
+  }
 })
 
 test("rejects cyclic input", () => {
@@ -339,6 +377,30 @@ test("copies a __proto__ key as an own property without polluting prototypes", (
   assert.ok(Object.prototype.hasOwnProperty.call(result.value, "__proto__"))
   assert.deepEqual(result.value.__proto__, { polluted: true })
   assert.equal({}.polluted, undefined)
+})
+
+test("creates valid output keys when Object.prototype is frozen", () => {
+  const moduleUrl = new URL("../dist/index.js", import.meta.url).href
+  const source = `
+    import { mergeStates } from ${JSON.stringify(moduleUrl)}
+    Object.freeze(Object.prototype)
+    const submittedState = JSON.parse('{"constructor":"ctor","toString":"stringifier","hasOwnProperty":"own"}')
+    const result = mergeStates({ originalState: {}, submittedState, currentServerState: {} })
+    if (!result.ok) throw new Error("expected a successful merge")
+    if (Object.getPrototypeOf(result.value) !== Object.prototype) throw new Error("output prototype changed")
+    for (const key of ["constructor", "toString", "hasOwnProperty"]) {
+      if (!Object.hasOwn(result.value, key)) throw new Error("missing own " + key)
+    }
+    if (JSON.stringify(result.value) !== '{"constructor":"ctor","hasOwnProperty":"own","toString":"stringifier"}') {
+      throw new Error("valid keys changed during merge")
+    }
+    if ({}.polluted !== undefined) throw new Error("Object.prototype was polluted")
+  `
+  const child = spawnSync(process.execPath, ["--input-type=module", "-e", source], {
+    encoding: "utf8",
+  })
+
+  assert.equal(child.status, 0, `${child.stdout}\n${child.stderr}`)
 })
 
 test("merges additions of different keys on both sides", () => {

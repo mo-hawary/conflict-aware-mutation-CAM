@@ -61,7 +61,10 @@ export function useSaveOrder(id: string, api: OrderApi) {
         return api.putOrder(id, merged.value, latest.etag)
       }
     },
-    onSuccess: (saved) => queryClient.setQueryData(["order", id], saved),
+    onSuccess: async (saved) => {
+      await queryClient.cancelQueries({ queryKey: ["order", id], exact: true })
+      queryClient.setQueryData(["order", id], saved)
+    },
   })
 }
 
@@ -78,15 +81,17 @@ function Editor({ id, api, original }: { id: string; api: OrderApi; original: Lo
   const [draft, setDraft] = useState(original.state)
   const [pending, setPending] = useState<ConflictNeedsDecision | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [resolving, setResolving] = useState(false)
   const revisionRef = useRef(0)
   const inFlightRef = useRef(false)
   const save = useSaveOrder(id, api)
 
-  const runSave = async (variables: SaveVariables) => {
+  const runSave = async (variables: SaveVariables, isResolution = false) => {
     // React Query's isPending is rendered asynchronously. The ref closes the
     // same-event-window where two clicks could otherwise start two requests.
     if (inFlightRef.current) return
     inFlightRef.current = true
+    if (isResolution) setResolving(true)
     setSaveError(null)
     try {
       const saved = await save.mutateAsync(variables)
@@ -107,6 +112,7 @@ function Editor({ id, api, original }: { id: string; api: OrderApi; original: Lo
       }
     } finally {
       inFlightRef.current = false
+      if (isResolution) setResolving(false)
     }
   }
 
@@ -125,7 +131,9 @@ function Editor({ id, api, original }: { id: string; api: OrderApi; original: Lo
       <input
         aria-label="Notes"
         value={draft.notes}
+        disabled={resolving}
         onChange={(event) => {
+          if (resolving) return
           revisionRef.current += 1
           const notes = event.target.value
           setDraft((current) => ({ ...current, notes }))
@@ -142,12 +150,13 @@ function Editor({ id, api, original }: { id: string; api: OrderApi; original: Lo
               setSaveError("The draft changed while this conflict was open. Save again to refresh the choices.")
               return Promise.resolve()
             }
+            setDraft(state)
             return runSave({
               originalState: pending.inputs.currentServerState,
               submittedState: state,
               etag,
               revision: revisionRef.current,
-            })
+            }, true)
           }}
         />
       )}
