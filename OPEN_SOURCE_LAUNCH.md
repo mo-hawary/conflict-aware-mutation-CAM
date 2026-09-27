@@ -44,4 +44,5 @@ The package jobs install and exercise the real packed tarball, not workspace sou
 - npm package-name availability/ownership is **not verified** by an authenticated owner session.
 - npm Trusted Publishing is **not configured/verified**.
 - No npm publication has been attempted by this preparation work.
+- The one-time bootstrap must remove `"private": true` and temporarily set `publishConfig.provenance: false`; restore provenance before the next OIDC release.
 - The exact first npm version must come from Release Please. Based on current history, `0.1.1` is intended, but the release PR/tag is authoritative.
