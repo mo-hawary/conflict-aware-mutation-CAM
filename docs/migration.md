@@ -17,6 +17,8 @@ try {
 }
 ```
 
+Both `mergeStates()` and `matchConflictError()` also throw `CAMConfigError` when called with a missing, `undefined`, or `null` top-level argument. This concerns the options object: `null` remains a valid JSON snapshot value.
+
 The stable discriminator is `code: "CAM_CONFIG_ERROR"`. When inspecting an unknown error by code, check that it is a non-null object first. Internal invariant failures remain distinguishable from public validation errors.
 
 ## Pass explicit JSON snapshots

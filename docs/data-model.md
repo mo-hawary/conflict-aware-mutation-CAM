@@ -131,7 +131,7 @@ These merge results are structural only. Your application still owns server-side
 
 Conflict paths use lexicographic key order. Output objects are constructed deterministically; JavaScript still enumerates integer-index keys before other string keys. Do not use JSON property order as application data.
 
-CAM snapshots validated data before merging. Inputs and results share no object references. Shared, non-cyclic input references become independent copies; `-0` becomes `0`. Object outputs use `Object.prototype`, including when inputs have null prototypes.
+CAM snapshots validated data before merging. Inputs and results share no object references. Shared, non-cyclic input references become independent copies; `-0` becomes `0`. Object outputs use `Object.prototype`, including when inputs have null prototypes. Keys such as `constructor`, `toString`, and `__proto__` are preserved as ordinary own data properties without changing the output prototype, including when `Object.prototype` is frozen.
 
 Only own enumerable object properties are data. Non-enumerable object properties and non-enumerable extra array properties are ignored. Array indices must be own, enumerable data properties: holes, non-enumerable indices, and index accessors are rejected. Enumerable object accessors are rejected without invoking them. Symbol-keyed properties are rejected. Proxy traps may execute during inspection; the guarantee is that merging uses the validated private snapshot, not that each trap runs once.
 
