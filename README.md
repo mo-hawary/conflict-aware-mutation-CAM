@@ -115,6 +115,8 @@ For each path, one-sided changes are kept, identical changes agree, and differen
 | Array subclasses, holes, non-enumerable indices, extra enumerable non-index array properties | Rejected with `CAMConfigError` |
 | Non-enumerable object properties and extra non-enumerable array properties | Ignored |
 
+Depth starts at the root value (0). Each object property or array index adds one level; values at depth 512 are valid, and values at depth 513 are rejected. Empty containers and scalar leaves follow the same boundary.
+
 An `id` inside an array does not enable element-level merging. ID-keyed **objects** use ordinary object-key recursion. See [nested object and array examples](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/docs/data-model.md) for the distinction.
 
 CAM validates into private snapshots and merges those snapshots. Results are deterministic, inputs remain unchanged, and `-0` becomes `0`. Conflict paths are lexicographically ordered; JavaScript's integer-key enumeration rules still apply to output objects.

@@ -3,6 +3,12 @@ import test from "node:test"
 
 import { CAMConfigError, matchConflictError } from "../dist/index.js"
 
+test("rejects null and undefined matcher arguments with CAMConfigError", () => {
+  for (const input of [null, undefined]) {
+    assert.throws(() => matchConflictError(input), CAMConfigError)
+  }
+})
+
 test("matches by code", () => {
   assert.deepEqual(
     matchConflictError({ error: { code: 409 }, expectedError: { code: 409 } }),

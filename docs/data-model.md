@@ -135,6 +135,6 @@ CAM snapshots validated data before merging. Inputs and results share no object 
 
 Only own enumerable object properties are data. Non-enumerable object properties and non-enumerable extra array properties are ignored. Array indices must be own, enumerable data properties: holes, non-enumerable indices, and index accessors are rejected. Enumerable object accessors are rejected without invoking them. Symbol-keyed properties are rejected. Proxy traps may execute during inspection; the guarantee is that merging uses the validated private snapshot, not that each trap runs once.
 
-Nesting beyond 512 levels is rejected. This depth bound is not a payload-size or CPU budget; applications accepting untrusted input should enforce their own request limits.
+The root has depth 0; each object property or array index adds one depth level, and values deeper than 512 are rejected. Values at depth 512, including empty containers and scalars, are valid. This depth bound is not a payload-size or CPU budget; applications accepting untrusted input should enforce their own request limits.
 
 See the [supported-data table](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/README.md#supported-data-and-merge-granularity) and [migration guide](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/docs/migration.md).

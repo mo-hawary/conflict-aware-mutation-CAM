@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 
 import React from "react"
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { QueryClient, QueryClientProvider, QueryObserver } from "@tanstack/react-query"
 import { JSDOM } from "jsdom"
 import ts from "typescript"
 
@@ -105,6 +105,60 @@ async function waitForPuts(puts, count) {
 }
 
 const staleWrite = () => Object.assign(new Error("stale write"), { code: "STALE_WRITE" })
+
+test("a refetch started during a save cannot replace saved cache data or subscribers", async () => {
+  const initial = loaded(order(), "e1")
+  const staleRefetch = loaded(order({ notes: "stale refetch" }), "e1")
+  const saved = loaded(order({ notes: "saved" }), "e2")
+  let finishSave
+  let finishRefetch
+  let backgroundRefetches = 0
+  let fetchCount = 0
+  const savePromise = new Promise((resolveSaved) => { finishSave = resolveSaved })
+  const refetchPromise = new Promise((resolveFetched) => { finishRefetch = resolveFetched })
+  const api = {
+    fetchOrder: async () => {
+      fetchCount += 1
+      if (fetchCount === 1) return initial
+      backgroundRefetches += 1
+      return refetchPromise
+    },
+    putOrder: async () => savePromise,
+  }
+  const entry = await mountEditor("one", api)
+  const observer = new QueryObserver(entry.client, {
+    queryKey: ["order", "one"],
+    enabled: false,
+  })
+  const observedEtags = []
+  const unsubscribe = observer.subscribe(({ data }) => {
+    if (data) observedEtags.push(data.etag)
+  })
+
+  changeNotes(entry, "saved")
+  fireEvent.submit(entry.container.querySelector("form"))
+  await waitFor(() => assert.equal(button(entry, "Save").disabled, true))
+
+  let invalidation
+  act(() => {
+    invalidation = entry.client.invalidateQueries({ queryKey: ["order", "one"] })
+  })
+  await waitFor(() => assert.equal(backgroundRefetches, 1))
+
+  await act(async () => { finishSave(saved) })
+  await waitFor(() => assert.deepEqual(entry.client.getQueryData(["order", "one"]), saved))
+  await act(async () => {
+    finishRefetch(staleRefetch)
+    await invalidation
+  })
+
+  assert.deepEqual(entry.client.getQueryData(["order", "one"]), saved)
+  assert.deepEqual(observer.getCurrentResult().data, saved)
+  assert.ok(observedEtags.includes("e2"), "other query subscribers observe the committed save")
+  assert.equal(observer.getCurrentResult().data.etag, "e2")
+  unsubscribe()
+  observer.destroy()
+})
 
 test("keeps a dirty draft across refetch, merges, then saves against the refreshed ETag", async () => {
   const initial = loaded(order(), "e1")
@@ -253,6 +307,7 @@ test("applying choices awaits the save, refreshes editor state, and updates cach
   await waitFor(() => assert.equal(radioInputs(entry).length, 2))
 
   fireEvent.click(radioInputs(entry)[0])
+  assert.equal(radioInputs(entry)[0].checked, true, "Yours is the selected resolution")
   await applyChoices(entry)
   await waitForPuts(puts, 2)
   await waitFor(() => assert.equal(entry.container.querySelector("fieldset").disabled, true))
@@ -267,7 +322,7 @@ test("applying choices awaits the save, refreshes editor state, and updates cach
   assert.equal(notesInput(entry).value, "mine")
 })
 
-test("conflict resolution adopts the saved server state and preserves notes typed while pending", async () => {
+test("Theirs keeps the displayed draft aligned while resolution is pending and on the next save", async () => {
   const fetchQueue = [
     loaded(order({ notes: "original" }), "e1"),
     loaded(order({ status: "approved", notes: "server" }), "e2"),
@@ -289,23 +344,26 @@ test("conflict resolution adopts the saved server state and preserves notes type
   await submit(entry)
   await waitFor(() => assert.equal(radioInputs(entry).length, 2))
 
-  fireEvent.click(radioInputs(entry)[0])
+  fireEvent.click(radioInputs(entry)[1])
   await applyChoices(entry)
   await waitForPuts(puts, 2)
   assert.equal(puts[1].etag, "e2")
   assert.equal(puts[1].state.status, "approved", "the resolution starts from the current server state")
-  changeNotes(entry, "newer notes")
+  assert.equal(notesInput(entry).disabled, true, "notes editing is disabled during conflict resolution")
+  assert.equal(notesInput(entry).value, "server", "the draft immediately reflects the selected resolution")
+  changeNotes(entry, "mine!")
+  assert.equal(notesInput(entry).value, "server", "the pending resolution cannot be changed in the editor")
 
   finishResolution(loaded(puts[1].state, "e3"))
   await waitFor(() => assert.equal(button(entry, "Save").disabled, false))
-  assert.equal(notesInput(entry).value, "newer notes")
+  assert.equal(notesInput(entry).value, "server")
   assert.equal(entry.container.querySelector("fieldset"), null)
 
   await submit(entry)
   await waitForPuts(puts, 3)
   assert.equal(puts[2].etag, "e3", "the next save uses the conflict-resolution ETag")
   assert.equal(puts[2].state.status, "approved", "the next save retains the server change")
-  assert.equal(puts[2].state.notes, "newer notes", "the next save retains newer typing")
+  assert.equal(puts[2].state.notes, "server", "the next save retains the selected Theirs value")
 })
 
 test("reports a network failure without a code as a save error", async () => {
@@ -351,17 +409,23 @@ test("keeps the conflict visible and reports a failed resolved request", async (
   changeNotes(entry, "mine")
   await submit(entry)
   await waitFor(() => assert.equal(radioInputs(entry).length, 2))
-  fireEvent.click(radioInputs(entry)[0])
+  fireEvent.click(radioInputs(entry)[1])
   await applyChoices(entry)
   await waitFor(() => assert.ok(entry.getByRole("alert").textContent))
 
   assert.ok(entry.getByRole("group", { name: "Someone else changed these fields" }))
   assert.equal(button(entry, "Apply choices").disabled, false)
+  assert.equal(radioInputs(entry)[1].checked, true, "the selected Theirs choice survives failure")
+  assert.equal(notesInput(entry).value, "server", "the draft stays aligned with the failed resolution choice")
 
   await applyChoices(entry)
   await waitFor(() => assert.equal(putCount, 3))
   assert.deepEqual(etags, ["e1", "e2", "e2"], "the failed resolution keeps its server baseline and ETag")
   await waitFor(() => assert.equal(entry.container.querySelector("fieldset"), null))
+  assert.equal(notesInput(entry).value, "server")
+  await submit(entry)
+  await waitFor(() => assert.equal(putCount, 4))
+  assert.equal(etags[3], "e3", "the subsequent save uses the successful retry's ETag")
 })
 
 test("draft edits after a conflict invalidate old choices and survive a fresh merge", async () => {

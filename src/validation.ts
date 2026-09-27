@@ -188,23 +188,21 @@ export function snapshotJsonValue(value: unknown, label = "value"): JsonValue {
   return visit(value, 0)
 }
 
-/**
- * Adds an own enumerable property. Plain assignment is used for every key
- * except `__proto__`, which would otherwise invoke the prototype setter.
- */
+/** Adds an own enumerable data property without invoking prototype setters. */
 export function defineJsonProperty(
   target: { [key: string]: JsonValue },
   key: string,
   value: JsonValue,
 ): void {
-  if (key === "__proto__") {
+  if (key in Object.prototype) {
     Object.defineProperty(target, key, {
       configurable: true,
       enumerable: true,
       writable: true,
       value,
     })
-  } else {
-    target[key] = value
+    return
   }
+
+  target[key] = value
 }

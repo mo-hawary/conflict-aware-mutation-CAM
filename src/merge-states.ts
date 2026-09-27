@@ -6,6 +6,7 @@ import type {
   MergeStatesInput,
   PathSegment,
 } from "./types.js"
+import { CAMConfigError } from "./errors.js"
 import { defineJsonProperty, snapshotJsonValue } from "./validation.js"
 
 // Marks an absent object property (deletion). A symbol can never appear in a
@@ -141,6 +142,10 @@ function mergeSlot(
 export function mergeStates<T extends JsonValue>(
   input: MergeStatesInput<T>,
 ): MergeResult<T> {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    throw new CAMConfigError("mergeStates input must be an object")
+  }
+
   const originalState = snapshotJsonValue(input.originalState, "originalState")
   const submittedState = snapshotJsonValue(input.submittedState, "submittedState")
   const currentServerState = snapshotJsonValue(
