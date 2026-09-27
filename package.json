@@ -32,9 +32,17 @@
     "typecheck:tests": "tsc -p tsconfig.test.json",
     "pack:check": "npm pack --dry-run",
     "prepublishOnly": "npm test && npm run package:verify",
-    "package:verify": "node scripts/verify-package.mjs"
+    "package:verify": "node scripts/verify-package.mjs",
+    "test:coverage": "npm run build && node --test --experimental-test-coverage --test-coverage-include='dist/**' --test-coverage-lines=95 --test-coverage-branches=95 --test-coverage-functions=95 test/*.test.mjs",
+    "lint:package": "npm run build && publint --strict && attw --pack . --profile esm-only",
+    "size": "npm run build && size-limit",
+    "examples": "npm run build && node examples/fetch-rest.mjs"
   },
   "devDependencies": {
+    "@arethetypeswrong/cli": "0.18.5",
+    "@size-limit/preset-small-lib": "14.1.0",
+    "publint": "0.3.24",
+    "size-limit": "14.1.0",
     "typescript": "7.0.2"
   },
   "license": "MIT",

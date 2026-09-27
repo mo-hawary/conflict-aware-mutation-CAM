@@ -1,0 +1,12 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["src/index.ts"],
+  "out": "docs-site",
+  "name": "conflict-aware-mutation",
+  "readme": "README.md",
+  "includeVersion": true,
+  "excludePrivate": true,
+  "excludeInternal": true,
+  "treatWarningsAsErrors": true,
+  "sourceLinkTemplate": "https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/{gitRevision}/{path}#L{line}"
+}

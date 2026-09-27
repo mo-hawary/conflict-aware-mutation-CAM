@@ -1,5 +1,11 @@
 # Conflict-Aware Mutation (CAM)
 
+[![CI](https://github.com/mo-hawary/conflict-aware-mutation-CAM/actions/workflows/ci.yml/badge.svg)](https://github.com/mo-hawary/conflict-aware-mutation-CAM/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/conflict-aware-mutation)](https://www.npmjs.com/package/conflict-aware-mutation)
+[![bundle size](https://img.shields.io/bundlejs/size/conflict-aware-mutation)](https://bundlejs.com/?q=conflict-aware-mutation)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/mo-hawary/conflict-aware-mutation-CAM/badge)](https://scorecard.dev/viewer/?uri=github.com/mo-hawary/conflict-aware-mutation-CAM)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+
 CAM helps a client recover when a backend rejects a stale write. It checks whether the error is the conflict you expect, then compares the user's edit with the latest server state. Independent changes merge automatically; competing changes return the paths that need a decision.
 
 CAM is a small, headless TypeScript library with no runtime dependencies. It does not make requests, retry writes, or render a conflict UI.
@@ -276,7 +282,13 @@ npm ci
 npm run typecheck
 npm test
 npm run pack:check
+npm run test:coverage   # suite with coverage thresholds
+npm run lint:package    # publint + are-the-types-wrong
+npm run size            # bundle size budget
+npm run examples        # runnable end-to-end example
 ```
+
+Full API reference: <https://mo-hawary.github.io/conflict-aware-mutation-CAM/>. Integration examples, including fetch/REST and TanStack Query with React, are in [`examples/`](./examples).
 
 See [Contributing](./CONTRIBUTING.md) for PR guidance, [Security](./SECURITY.md) for private vulnerability reports, [Code of Conduct](./CODE_OF_CONDUCT.md), [Changelog](./CHANGELOG.md), and [Releasing](./RELEASING.md) for the release process.
 
