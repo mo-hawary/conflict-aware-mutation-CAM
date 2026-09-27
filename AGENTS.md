@@ -341,7 +341,7 @@ Every bug fix must include a regression test.
 
 - Be prototype-pollution-safe when traversing or constructing objects.
 - Never mutate `originalState`, `submittedState`, or `currentServerState`.
-- Keep output deterministic: merged object keys are always sorted (input key order is not preserved), and conflicts are emitted in sorted path order.
+- Keep output deterministic: construct object keys in sorted order (JavaScript still enumerates integer-index keys first), and emit conflicts in lexicographic path order.
 - Treat `-0` and `0` as equal. Output contains `0`, never `-0`.
 - Reject symbol-keyed properties.
 - Depth strategy for v1: validation rejects nesting deeper than 512 levels with `CAMConfigError`, which bounds all recursive traversal.
@@ -393,7 +393,7 @@ Avoid scope expansion unless it directly improves the small conflict-aware mutat
 - Release Please owns normal package version bumps, `.release-please-manifest.json`, generated `CHANGELOG.md` release entries, `vX.Y.Z` tags, and GitHub Releases.
 - Do not manually create or move release tags.
 - Do not bypass the release PR to force a version.
-- Keep `"private": true` until npm Trusted Publishing is configured for the public repository.
+- The initial npm bootstrap is complete. Keep normal publishing on the validated release-tag workflow with provenance enabled; do not repeat the bootstrap exception.
 - Do not add long-lived npm publish tokens when OIDC trusted publishing is available.
 - CI must verify supported Node LTS versions and run a package tarball dry-run.
 

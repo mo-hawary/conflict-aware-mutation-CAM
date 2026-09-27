@@ -1,6 +1,8 @@
-# Public launch and release status
+# Historical public launch record
 
-Status snapshot: **September 27, 2026**
+Historical snapshot: **September 27, 2026**
+
+This records the initial `0.1.1` launch. It is not current operational status. The package has since advanced, and current source enables provenance. Use [RELEASING.md](./RELEASING.md), GitHub Actions, and the npm registry to verify a later release.
 
 Reviewed `main`: `cbe1df7140841397465a6a9cfc06a5621ef67d6b`
 
@@ -35,10 +37,10 @@ Repository: [mo-hawary/conflict-aware-mutation-CAM](https://github.com/mo-hawary
 - A clean consumer installed the registry package. Runtime imports and a merge example passed; an independent TypeScript consumer compiled against its declarations.
 - The registry integrity matches the locally verified release artifact. `npm audit signatures` verified the package's registry signature. The registry has no provenance attestation for this one-time bootstrap publication; `publishConfig.provenance: false` was the documented exception.
 
-## Remaining work
+## Follow-ups recorded at the launch snapshot
 
 - **npm Trusted Publishing:** configuration is not yet verified. Required values are owner `mo-hawary`, repository `conflict-aware-mutation-CAM`, workflow `publish-npm.yml`, and environment `npm`. npm rejected the current setup attempt with `EOTP`; it needs account-owner 2FA authorization.
-- **Provenance for normal releases:** restore `publishConfig.provenance: true` in a checked PR before the next release, then verify the trusted-publishing workflow against the registry.
+- **Historical provenance follow-up (now reflected in source):** restore `publishConfig.provenance: true` in a checked PR before the next release, then verify the trusted-publishing workflow against the registry.
 - **Published README:** the v0.1.1 npm page still displays the stale README from its release tag. The README cleanup PR updates GitHub and is intentionally docs-only, so it will not create a release. npm displays the README from a published package version; a separate Release Please-generated patch release is required to refresh the npm page. Verify that page after publication.
 
 ## Launch references

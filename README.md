@@ -1,37 +1,18 @@
-# Conflict-Aware Mutation (CAM)
+# Conflict-Aware Mutation
 
+**Keep independent edits. Surface real conflicts.**
+
+[![npm version](https://img.shields.io/npm/v/conflict-aware-mutation)](https://www.npmjs.com/package/conflict-aware-mutation)
 [![CI](https://github.com/mo-hawary/conflict-aware-mutation-CAM/actions/workflows/ci.yml/badge.svg)](https://github.com/mo-hawary/conflict-aware-mutation-CAM/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/conflict-aware-mutation)](https://www.npmjs.com/package/conflict-aware-mutation)
-[![bundle size](https://img.shields.io/bundlejs/size/conflict-aware-mutation)](https://bundlejs.com/?q=conflict-aware-mutation)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/mo-hawary/conflict-aware-mutation-CAM/badge)](https://scorecard.dev/viewer/?uri=github.com/mo-hawary/conflict-aware-mutation-CAM)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/LICENSE)
+[![ESM](https://img.shields.io/badge/module-ESM-blue)](https://www.npmjs.com/package/conflict-aware-mutation)
+[![TypeScript](https://img.shields.io/badge/types-TypeScript-blue)](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/src/types.ts)
 
-CAM helps a client recover when a backend rejects a stale write. It checks whether the error is the conflict you expect, then compares the user's edit with the latest server state. Independent changes merge automatically; competing changes return the paths that need a decision.
+A user edits an order. Someone else updates its shipping address. The first save is rejected as stale. **CAM helps preserve both changes** with a deterministic three-way merge of JSON snapshots.
 
-CAM is a small, headless TypeScript library with no runtime dependencies. It does not make requests, retry writes, or render a conflict UI.
+Small, headless, and zero runtime dependencies. Use it in forms, admin panels, CMS editors, and other applications whose backend already enforces optimistic concurrency.
 
-## Supported data and merge granularity
-
-CAM supports deeply nested JSON objects, including records keyed by IDs. It recursively merges independent object-field changes. Arrays are valid input but are atomic merge values: CAM does not merge array elements by index or inferred identity. Specialized JavaScript values such as `Date`, `Map`, and `Set` are unsupported.
-
-| Data shape | Accepted? | Merge behavior |
-| --- | --- | --- |
-| JSON primitives (`string`, finite `number`, `boolean`, `null`) | Yes | Atomic value |
-| Nested plain objects, including null-prototype objects | Yes | Recursively merges independent object-field changes; output objects use the ordinary `Object.prototype` |
-| Records keyed by IDs, for example `products["p1"]` | Yes | Ordinary object-key recursion; keys act as paths |
-| Arrays, including arrays of objects | Yes | Atomic at the array path; no element-by-element merge |
-| Property additions and deletions | Yes | Compared per object property; absence is distinct from `null` |
-| `Date`, `Map`, `Set`, class instances, `BigInt`, `undefined`, functions, symbols, non-finite numbers | No | Rejected with `CAMConfigError` |
-| Sparse arrays, `Array` subclasses, arrays with extra enumerable non-index properties, and symbol-keyed properties | No | Rejected with `CAMConfigError` |
-| Enumerable object accessors and array-index accessors | No | Rejected with `CAMConfigError` without being invoked |
-| Non-enumerable object properties | Ignored | Excluded as with `JSON.stringify`; getters are never invoked |
-| Non-enumerable array indices | No | Rejected; CAM requires enumerable array indices, although `JSON.stringify` serializes array slots by index regardless of enumerability |
-| Cyclic references | No | Rejected with `CAMConfigError` |
-| Nesting deeper than 512 levels | No | Rejected with `CAMConfigError` |
-
-**Accepted input is not the same as fine-grained merge support.** An array of complex objects is valid JSON input, but CAM treats the entire array as one value when both sides change it. By contrast, plain objects are traversed recursively.
-
-ID-keyed records work because IDs are ordinary object keys. CAM does not inspect an `id` property inside an array and does not infer element identity. Also, when both sides add the same previously absent property with different objects, CAM reports one conflict at that property instead of recursively combining two independently created objects.
+[API reference](https://mo-hawary.github.io/conflict-aware-mutation-CAM/) · [Examples](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/examples/README.md) · [Changelog](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/CHANGELOG.md) · [Contributing](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/CONTRIBUTING.md)
 
 ## Install
 
@@ -39,278 +20,162 @@ ID-keyed records work because IDs are ordinary object keys. CAM does not inspect
 npm install conflict-aware-mutation
 ```
 
-CAM supports Node.js 22 and 24, ships as ESM, and includes TypeScript declarations. CI also runs smoke tests in Deno, Bun, Chromium, Firefox, and WebKit.
+ESM with TypeScript declarations. Node.js 22 and 24 are tested in CI; browser, Deno, and Bun smoke tests verify the framework-independent core. No CommonJS entry point is provided.
 
-Try it without installing: [open the playground on StackBlitz](https://stackblitz.com/github/mo-hawary/conflict-aware-mutation-CAM/tree/main/examples/playground).
+> The GitHub `main` README describes the current source. The npm README describes its published version. Upgrading from 0.1.x? Read the [migration guide](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/docs/migration.md).
 
-## Quick start
+## Two edits. One safe structural merge.
 
-Save this as `example.mjs` and run `node example.mjs`. The small in-memory API simulates another editor changing `status` while you change `name`.
+Save this as `example.mjs` and run `node example.mjs` after installing:
 
 ```js
-import { matchConflictError, mergeStates } from "conflict-aware-mutation"
+import { mergeStates } from "conflict-aware-mutation"
 
-// The record and version when editing began.
-const originalState = { name: "Ada", status: "draft" }
-const originalVersion = 1
+const result = mergeStates({
+  originalState:     { name: "Ada",          status: "draft" },
+  submittedState:    { name: "Ada Lovelace", status: "draft" },
+  currentServerState: { name: "Ada",         status: "approved" },
+})
 
-// The user's attempted edit. Another editor has since changed the server record.
-const submittedState = { name: "Ada Lovelace", status: "draft" }
-let server = { state: { name: "Ada", status: "approved" }, version: 2 }
-
-async function save(state, version) {
-  if (version !== server.version) {
-    throw { code: 409, text: "Record has changed" }
-  }
-  server = { state, version: version + 1 }
-}
-
-async function fetchCurrent() {
-  return server
-}
-
-try {
-  await save(submittedState, originalVersion)
-} catch (error) {
-  const match = matchConflictError({
-    error,
-    expectedError: { code: 409 },
-  })
-
-  if (!match.matched) {
-    console.error(match.error)
-    process.exitCode = 1
-  } else {
-    // Fetch only after confirming this is the expected stale-write error.
-    const { state: currentServerState, version } = await fetchCurrent()
-    const result = mergeStates({ originalState, submittedState, currentServerState })
-
-    if (result.ok) {
-      await save(result.value, version)
-      console.log(server.state) // { name: 'Ada Lovelace', status: 'approved' }
-    } else {
-      console.log(result.conflicts) // Show these paths for human resolution.
-    }
-  }
-}
+console.log(result)
+// {
+//   ok: true,
+//   value: { name: "Ada Lovelace", status: "approved" },
+//   conflicts: []
+// }
 ```
 
-With a real backend, capture `originalState` when editing begins and create `submittedState` from the attempted save. Normalize the backend error to an object with its own `code` or `text` property before calling `matchConflictError()`. Fetch the latest record and its version or ETag only after a match. A retry must use that version or ETag as a backend concurrency precondition; another write can happen between the fetch and retry.
+The user changed `name`; the server changed `status`. CAM keeps both. If they change the same field differently, CAM returns the exact path and both choices:
+
+```js
+import { mergeStates } from "conflict-aware-mutation"
+
+const result = mergeStates({
+  originalState: { customer: { phone: "111" } },
+  submittedState: { customer: { phone: "333" } },
+  currentServerState: { customer: { phone: "222" } },
+})
+
+console.log(result)
+// {
+//   ok: false,
+//   kind: "conflict",
+//   conflicts: [{
+//     path: ["customer", "phone"],
+//     submitted: { exists: true, value: "333" },
+//     currentServer: { exists: true, value: "222" }
+//   }]
+// }
+```
+
+**An unresolved result has no partial `value` to accidentally save.** Your application can present those choices and apply the user's decision.
+
+## Where CAM fits
+
+| Step | Responsibility |
+| --- | --- |
+| Capture the record and its version when editing starts | Your application |
+| Reject a stale write using a version or `If-Match` precondition | Your backend |
+| Recognize the expected conflict error | CAM: `matchConflictError()` |
+| Fetch the latest record and its version | Your application |
+| Merge independent changes or report conflicting paths | CAM: `mergeStates()` |
+| Validate the combined result, resolve conflicts, and save with the latest version | Your application and backend |
+
+CAM performs no network requests, automatic retries, or UI rendering. A second writer can race your retry, so **every write must retain the backend concurrency precondition**.
+
+Keep the original snapshot and its version together throughout editing. A background refetch must not attach a new version to an old draft. See the tested [REST and React examples](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/examples/README.md) for the complete lifecycle.
 
 ## The three states
 
 | Input | Meaning |
 | --- | --- |
-| `originalState` | Server state when editing began. |
-| `submittedState` | State the user tried to save. |
-| `currentServerState` | Latest server state fetched after the stale-write rejection. |
+| `originalState` | Server state captured when editing began |
+| `submittedState` | Complete state the user attempted to save |
+| `currentServerState` | Latest server state fetched after the stale-write rejection |
 
-For each path, CAM keeps the side that changed. If both sides made the same change, it keeps that value. If they made different changes, it reports a conflict. Nested plain objects can merge at different paths; arrays are atomic, so two different array edits conflict at the array path.
+Pass complete snapshots, not PATCH payloads: a missing property means deletion.
 
-## Data-shape examples
+For each path, one-sided changes are kept, identical changes agree, and different changes on both sides conflict. Objects recurse only when a plain object exists on all three sides. If both sides add the same previously absent key with different objects, the conflict stays at that key.
 
-### Deeply nested objects and ID-keyed records
+## Supported data and merge granularity
 
-Independent edits inside existing nested objects merge recursively, including records whose keys are IDs:
+**Complex nested JSON is supported. Specialized JavaScript collections are not.**
 
-```js
-import { mergeStates } from "conflict-aware-mutation"
+| Data | Behavior |
+| --- | --- |
+| Strings, finite numbers, booleans, `null` | Atomic values |
+| Nested plain objects; records keyed by IDs | Recursive field-level merging |
+| Arrays, including arrays of objects | Accepted but atomic: different edits conflict at the array path |
+| Missing object property | Deletion; distinct from explicit `null` |
+| Null-prototype objects | Accepted; outputs use `Object.prototype` |
+| Shared non-cyclic references | Copied independently; outputs do not alias inputs |
+| `Date`, `Map`, `Set`, class instances, `BigInt`, functions, `undefined`, non-finite numbers | Rejected with `CAMConfigError` |
+| Symbols, symbol keys, cycles, nesting beyond 512 levels | Rejected with `CAMConfigError` |
+| Enumerable object accessors; array-index accessors | Rejected without invoking getters |
+| Array subclasses, holes, non-enumerable indices, extra enumerable non-index array properties | Rejected with `CAMConfigError` |
+| Non-enumerable object properties and extra non-enumerable array properties | Ignored |
 
-const result = mergeStates({
-  originalState: {
-    profile: {
-      address: { city: "Cairo", street: "Tahrir" },
-    },
-    products: {
-      p1: { name: "Desk", price: 100 },
-      p2: { name: "Lamp", price: 40 },
-    },
-  },
-  submittedState: {
-    profile: {
-      address: { city: "Giza", street: "Tahrir" },
-    },
-    products: {
-      p1: { name: "Standing Desk", price: 100 },
-      p2: { name: "Lamp", price: 40 },
-    },
-  },
-  currentServerState: {
-    profile: {
-      address: { city: "Cairo", street: "Corniche" },
-    },
-    products: {
-      p1: { name: "Desk", price: 110 },
-      p2: { name: "Lamp", price: 40 },
-    },
-  },
-})
+An `id` inside an array does not enable element-level merging. ID-keyed **objects** use ordinary object-key recursion. See [nested object and array examples](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/docs/data-model.md) for the distinction.
 
-console.log(result)
-```
-
-Expected result:
-
-```js
-{
-  ok: true,
-  value: {
-    products: {
-      p1: { name: "Standing Desk", price: 110 },
-      p2: { name: "Lamp", price: 40 },
-    },
-    profile: {
-      address: { city: "Giza", street: "Corniche" },
-    },
-  },
-  conflicts: [],
-}
-```
-
-Here `p1` and `p2` are just object keys. CAM does not require or infer a special record schema.
-
-### Arrays of objects are atomic
-
-Even when objects inside the array have `id` fields, CAM does not merge different array elements independently:
-
-```js
-import { mergeStates } from "conflict-aware-mutation"
-
-const result = mergeStates({
-  originalState: {
-    items: [
-      { id: "a", qty: 1 },
-      { id: "b", qty: 1 },
-    ],
-  },
-  submittedState: {
-    items: [
-      { id: "a", qty: 2 },
-      { id: "b", qty: 1 },
-    ],
-  },
-  currentServerState: {
-    items: [
-      { id: "a", qty: 1 },
-      { id: "b", qty: 3 },
-    ],
-  },
-})
-
-console.log(result)
-```
-
-Expected result:
-
-```js
-{
-  ok: false,
-  kind: "conflict",
-  conflicts: [
-    {
-      path: ["items"],
-      submitted: {
-        exists: true,
-        value: [
-          { id: "a", qty: 2 },
-          { id: "b", qty: 1 },
-        ],
-      },
-      currentServer: {
-        exists: true,
-        value: [
-          { id: "a", qty: 1 },
-          { id: "b", qty: 3 },
-        ],
-      },
-    },
-  ],
-}
-```
-
-A one-sided array change is accepted, and identical array changes on both sides are accepted. Different changes on both sides conflict at the array path.
-
-These merge results are structural only. Your application still owns server-side validation and must retry writes with the latest version, ETag, or equivalent optimistic-concurrency precondition.
+CAM validates into private snapshots and merges those snapshots. Results are deterministic, inputs remain unchanged, and `-0` becomes `0`. Conflict paths are lexicographically ordered; JavaScript's integer-key enumeration rules still apply to output objects.
 
 ## API
 
-The runtime exports are `matchConflictError()`, `mergeStates()`, and `CAMConfigError`. TypeScript types are also exported.
+Three runtime exports: `mergeStates`, `matchConflictError`, and `CAMConfigError`. Public TypeScript types are exported alongside them.
 
-### `matchConflictError()`
+### `mergeStates({ originalState, submittedState, currentServerState })`
 
-```ts
-matchConflictError({
-  error: { code: 409, text: "Record has changed" },
-  expectedError: { code: 409 },
-  errorOutput: "backend", // optional; this is the default
+| Result | Meaning |
+| --- | --- |
+| `{ ok: true, value, conflicts: [] }` | Structurally merged value |
+| `{ ok: false, kind: "conflict", conflicts }` | Decisions required; no `value` |
+
+Each conflict has a `path` array and two sides, `submitted` and `currentServer`. A side is `{ exists: true, value }` or `{ exists: false }` for deletion. A key containing dots remains a single path segment; a root-level conflict has path `[]`.
+
+### `matchConflictError({ error, expectedError, errorOutput? })`
+
+```js
+import { matchConflictError } from "conflict-aware-mutation"
+
+const result = matchConflictError({
+  error: { code: "STALE_WRITE", text: "Order changed" },
+  expectedError: { code: "STALE_WRITE" },
 })
-// { matched: true }
+console.log(result) // { matched: true }
 ```
 
-An unmatched error returns `{ matched: false, error }`. The returned error is a validated snapshot of the backend `code` and `text` by default. Set `errorOutput: { text: "Unable to save" }` to replace its text while retaining its code.
+Normalize backend errors into own `code` and/or `text` properties first. Each signal needs at least one field. Codes compare strictly (`409` differs from `"409"`); text matches exactly. If both expected fields are supplied, both must match. Numeric codes must be finite.
 
-At least one of `code` or `text` is required in both `error` and `expectedError`. Codes use strict equality (`409` differs from `"409"`); text uses exact equality. If `expectedError` specifies both, both must match. CAM reads only own `code` and `text` properties, so normalize framework or class errors first.
+An unmatched result is `{ matched: false, error }`. By default, `error` contains the validated backend fields. Set `errorOutput: { text: "Unable to save" }` to replace the text while retaining any backend code. Arbitrary network exceptions are not valid signals: handle or rethrow them before calling CAM.
 
-### `mergeStates()`
+### `CAMConfigError`
 
-```ts
-const result = mergeStates({
-  originalState: { phone: "111" },
-  submittedState: {},              // User deleted phone.
-  currentServerState: { phone: "222" },
-})
+Invalid supported-API inputs throw `CAMConfigError`, an `Error` with `code: "CAM_CONFIG_ERROR"`. Ordinary concurrent edits return a conflict result instead. Catch the exported class explicitly; it does not extend `TypeError`.
 
-// result:
-// {
-//   ok: false,
-//   kind: "conflict",
-//   conflicts: [{
-//     path: ["phone"],
-//     submitted: { exists: false },
-//     currentServer: { exists: true, value: "222" },
-//   }],
-// }
-```
+### TypeScript and domain validation
 
-On success, the result is `{ ok: true, value, conflicts: [] }`. On a conflict, it is `{ ok: false, kind: "conflict", conflicts }` and has no partial `value` to save. Conflict paths are arrays of segments, such as `["shippingAddress", "city"]`; a key containing a dot stays one segment. `exists: false` means the property was deleted, which differs from `{ exists: true, value: null }`.
+Use JSON-compatible `type` aliases for state shapes. Interfaces lack the implicit index signature required by `JsonValue`.
 
-CAM accepts JSON-compatible primitives, arrays, and plain objects. It rejects `undefined`, non-finite numbers, `Date`, class instances, symbols, accessors, cycles, sparse arrays, `Array` subclasses, arrays with extra own properties, and nesting beyond 512 levels with `CAMConfigError`. Invalid input is a programmer error; an ordinary concurrent edit returns a conflict result. `CAMConfigError` extends `Error` (not `TypeError`) and has `code: "CAM_CONFIG_ERROR"`.
+`mergeStates<T>()` returns a value typed as `T`, but does not validate your business rules or schema. Combining individually valid edits can violate cross-field constraints or discriminated unions. Validate the combined result before saving, and keep server-side validation authoritative.
 
-CAM reads each included property once, through its own data descriptor, into a private copy. The merge only sees that copy, so a getter or proxy cannot change a value after validation. CAM never mutates your inputs, and the result never shares objects with them. Merged object keys and conflict paths have deterministic sorted order, and `-0` becomes `0`.
+## Examples and playground
 
-### Migration from 0.1.x
+- [Fetch + REST](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/examples/fetch-rest.mjs): executable ETag conflict, merge, retry, and manual resolution.
+- [React + TanStack Query](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/examples/react/tanstack-query-react.tsx): editing baseline, conflict picker, bounded retry, and preservation of edits during saves.
+- [Browser playground](https://github.com/mo-hawary/conflict-aware-mutation-CAM/tree/main/examples/playground): edit all three snapshots and inspect the result. [Run locally](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/examples/playground/README.md).
 
-`CAMConfigError` now extends `Error` directly instead of `TypeError`. Replace `error instanceof TypeError` checks for invalid CAM inputs with `error instanceof CAMConfigError`, or check `error.code === "CAM_CONFIG_ERROR"`. The class and code distinguish public validation failures from internal `TypeError` invariant failures.
+Examples are application code, not extra runtime exports. Their dependencies do not enter the core package.
 
-Validation now rejects enumerable object accessors and array-index accessors without invoking them, as well as `Array` subclasses, sparse arrays, non-enumerable array indices, and arrays with extra enumerable non-index properties. Normalize these inputs into plain JSON data before calling CAM. Non-enumerable object properties are ignored, as with `JSON.stringify`; array indices must be enumerable even though `JSON.stringify` serializes them by position.
+## Scope and quality
 
-### TypeScript notes
+CAM targets stale CRUD writes: customer profiles, inventory metadata, settings, and content records. It is not a CRDT, collaborative text editor, mutation-testing tool, or replacement for backend concurrency checks.
 
-`mergeStates<T extends JsonValue>()` checks that your state type is JSON-compatible. Declare state shapes with a `type` alias rather than an `interface`; interfaces have no implicit index signature, so TypeScript rejects them as `JsonValue`.
+CI exercises the merge truth table, deletion and array semantics, property-based comparison against a reference implementation, input immutability, depth boundaries, and large conflict sets. It also checks the installed package, types, coverage, bundle budget, and integration examples. Benchmarks are report-only; runtime smoke tests are not a claim of exhaustive production coverage.
 
-The merged `value` is typed as `T`, but a per-field merge can combine fields that are each valid yet invalid together. For example, if the user switches `{ kind: "card", last4 }` to `{ kind: "bank", iban }` while the server adds a card-only field, the merge succeeds with a `"bank"` object that still has the card field. Validate merged values against your domain rules before saving when such invariants matter.
+## Contribute
 
-## Integration responsibilities
+Start with the [contribution guide](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/CONTRIBUTING.md), [roadmap](https://github.com/mo-hawary/conflict-aware-mutation-CAM/issues/29), or [good first issues](https://github.com/mo-hawary/conflict-aware-mutation-CAM/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22). Small reproductions with all three states are especially helpful.
 
-Your application owns the backend call, error normalization, fetching the latest state, retrying with a concurrency precondition, and presenting unresolved conflicts. CAM owns error matching and the three-way merge. The backend must still enforce optimistic concurrency on every write.
+[Security policy](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/SECURITY.md) · [Code of conduct](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/CODE_OF_CONDUCT.md) · [Release process](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/RELEASING.md)
 
-## Development and community
-
-```bash
-npm ci
-npm run typecheck
-npm test
-npm run pack:check
-npm run test:coverage   # suite with coverage thresholds
-npm run lint:package    # publint + are-the-types-wrong
-npm run size            # bundle size budget
-npm run examples        # runnable end-to-end example
-npm run bench           # representative mergeStates() benchmarks
-npm run mutation        # Stryker mutation testing (slow)
-```
-
-Full API reference: <https://mo-hawary.github.io/conflict-aware-mutation-CAM/>. Integration examples, including fetch/REST and TanStack Query with React, are in [`examples/`](./examples/README.md). For maintainer and portfolio context, see [Mohawary.com](https://mohawary.com/open-source); library behavior and API details stay documented here and in the API reference.
-
-See [Contributing](./CONTRIBUTING.md) for PR guidance, [Security](./SECURITY.md) for private vulnerability reports, [Code of Conduct](./CODE_OF_CONDUCT.md), [Changelog](./CHANGELOG.md), and [Releasing](./RELEASING.md) for the release process.
-
-MIT licensed. See [LICENSE](./LICENSE).
+Created by [Mo Hawary](https://mohawary.com). Released under the [MIT license](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/LICENSE).

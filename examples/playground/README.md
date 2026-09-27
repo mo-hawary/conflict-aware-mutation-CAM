@@ -1,9 +1,18 @@
-# CAM playground
+# CAM browser playground
 
-The playground depends on `file:../..`, so local builds and CI always bundle the CAM checkout being reviewed instead of a fixed published version. After changing the root package `name`, `version`, or entry points, refresh this example's lockfile from the repository root with:
+Edit the original, submitted, and current server JSON snapshots and inspect the merge result. Arrays are atomic; objects merge recursively.
 
-```sh
-npm install --package-lock-only --prefix examples/playground
+From the repository root:
+
+```bash
+npm ci
+npm run build
+npm ci --prefix examples/playground
+npm run dev --prefix examples/playground
 ```
 
-Then verify it with `npm ci --prefix examples/playground && npm run build --prefix examples/playground`.
+Open the local URL printed by Vite. For a production build, run `npm run build --prefix examples/playground`.
+
+The playground depends on `file:../..`, so it uses the built repository checkout rather than a pinned npm release. Rebuild the root after core changes. An online sandbox must include the repository root and run the root build; importing only this subdirectory is insufficient.
+
+After changing the root package name, version, or entry points, refresh the example lockfile with `npm install --package-lock-only --prefix examples/playground`, then verify a clean install and build.

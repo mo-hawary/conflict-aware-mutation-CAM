@@ -61,8 +61,12 @@
     "conflict-resolution",
     "optimistic-concurrency",
     "three-way-merge",
+    "stale-write",
+    "json-merge",
+    "etag",
     "crud",
-    "typescript"
+    "typescript",
+    "headless"
   ],
   "engines": {
     "node": ">=22"
