@@ -141,7 +141,24 @@ jobs:
           PACKAGE_VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
-          npm view "$PACKAGE_NAME@$PACKAGE_VERSION" --json > "$RUNNER_TEMP/cam-release/registry.json"
+          REGISTRY_ERROR="$(mktemp)"
+          trap 'rm -f "$REGISTRY_ERROR"' EXIT
+          for attempt in {1..30}; do
+            if npm view "$PACKAGE_NAME@$PACKAGE_VERSION" --json --prefer-online > "$RUNNER_TEMP/cam-release/registry.json" 2>"$REGISTRY_ERROR"; then
+              break
+            fi
+            if ! grep -q "E404" "$REGISTRY_ERROR"; then
+              cat "$REGISTRY_ERROR" >&2
+              exit 1
+            fi
+            if (( attempt == 30 )); then
+              echo "npm has not finished processing $PACKAGE_NAME@$PACKAGE_VERSION after five minutes." >&2
+              cat "$REGISTRY_ERROR" >&2
+              exit 1
+            fi
+            echo "npm is still processing $PACKAGE_NAME@$PACKAGE_VERSION; retrying in 10 seconds ($attempt/30)."
+            sleep 10
+          done
           node scripts/verify-registry.mjs metadata "$RUNNER_TEMP/cam-release"
           SCRIPT="$GITHUB_WORKSPACE/scripts/verify-registry.mjs"
           VERIFY_DIR="$(mktemp -d)"
