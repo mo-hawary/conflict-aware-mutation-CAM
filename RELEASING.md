@@ -91,5 +91,5 @@ See `OPEN_SOURCE_LAUNCH.md` for the current verified/pending control status.
 ## Revalidated references (2026-09-27)
 
 - npm Trusted Publishing: https://docs.npmjs.com/trusted-publishers/
-- npm staged publishing: https://docs.npmjs.com/generating-provenance-statements/#about-npm-provenance
+- npm staged publishing: https://docs.npmjs.com/staged-publishing/
 - GitHub `GITHUB_TOKEN` event behavior: https://docs.github.com/actions/how-tos/writing-workflows/choosing-when-your-workflow-runs/triggering-a-workflow
