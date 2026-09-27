@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -20,7 +20,8 @@ const run = (command, args, options = {}) =>
   })
 
 try {
-  run("mkdir", ["-p", packDir, consumerDir])
+  mkdirSync(packDir, { recursive: true })
+  mkdirSync(consumerDir, { recursive: true })
 
   const packedJson = run(
     "npm",
