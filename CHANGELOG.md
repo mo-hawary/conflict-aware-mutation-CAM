@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.1](https://github.com/mo-hawary/conflict-aware-mutation-CAM/compare/v0.1.0...v0.1.1) (2026-09-27)
+
+
+### Bug Fixes
+
+* keep package verification cross-platform ([cd0ade4](https://github.com/mo-hawary/conflict-aware-mutation-CAM/commit/cd0ade494c2a76740b1e7f4e2f68723f182ce5c4))
+* prepare CAM for npm launch ([7cc9245](https://github.com/mo-hawary/conflict-aware-mutation-CAM/commit/7cc9245c05bd06aeb86f1718293a7f865a44c485))
+* prepare npm launch ([68b74c4](https://github.com/mo-hawary/conflict-aware-mutation-CAM/commit/68b74c4b4d7542e3a8df8457d8ba113675118ad4))
+* verify published artifact identity and serialize npm releases ([3765f96](https://github.com/mo-hawary/conflict-aware-mutation-CAM/commit/3765f96ba7b0468ebdde3b9f4d2b61b55b1c6a73))
+
 ## 0.1.0 (2026-09-26)
 
 
@@ -24,4 +34,3 @@
 * restore generic merge result contract ([a0d79ef](https://github.com/mo-hawary/conflict-aware-mutation-CAM/commit/a0d79ef342c62803931dc8b588de80adf793a2ce))
 * return fresh unmatched error objects ([2fffd8d](https://github.com/mo-hawary/conflict-aware-mutation-CAM/commit/2fffd8da93845e9249bc0154f7bb8e91e1752e9f))
 * satisfy strict indexed access in merge engine ([761db83](https://github.com/mo-hawary/conflict-aware-mutation-CAM/commit/761db834ac24b3716b5b894df2cd1c6226970be9))
-
