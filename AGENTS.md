@@ -37,6 +37,8 @@ A convenience `resolveConflict()` may compose both concerns for callers that alr
 
 v1 is JSON-compatible only.
 
+For the canonical consumer-facing capability matrix and runnable data-shape examples, see [Supported data and merge granularity](./README.md#supported-data-and-merge-granularity) in the README.
+
 ```ts
 type JsonPrimitive = string | number | boolean | null
 
