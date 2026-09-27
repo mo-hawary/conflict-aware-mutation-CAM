@@ -4,6 +4,26 @@ CAM helps a client recover when a backend rejects a stale write. It checks wheth
 
 CAM is a small, headless TypeScript library with no runtime dependencies. It does not make requests, retry writes, or render a conflict UI.
 
+
+## Supported data and merge granularity
+
+CAM supports deeply nested JSON objects, including records keyed by IDs. It recursively merges independent object-field changes. Arrays are valid input but are atomic merge values: CAM does not merge array elements by index or inferred identity. Specialized JavaScript values such as `Date`, `Map`, and `Set` are unsupported.
+
+| Data shape | Accepted? | Merge behavior |
+| --- | --- | --- |
+| JSON primitives (`string`, finite `number`, `boolean`, `null`) | Yes | Atomic value |
+| Nested plain objects | Yes | Recursively merges independent object-field changes |
+| Records keyed by IDs, for example `products["p1"]` | Yes | Ordinary object-key recursion; keys act as paths |
+| Arrays, including arrays of objects | Yes | Atomic at the array path; no element-by-element merge |
+| Property additions and deletions | Yes | Compared per object property; absence is distinct from `null` |
+| `Date`, `Map`, `Set`, class instances, `BigInt`, `undefined`, functions, symbols, non-finite numbers | No | Rejected with `CAMConfigError` |
+| Cyclic references | No | Rejected with `CAMConfigError` |
+| Nesting deeper than 512 levels | No | Rejected with `CAMConfigError` |
+
+**Accepted input is not the same as fine-grained merge support.** An array of complex objects is valid JSON input, but CAM treats the entire array as one value when both sides change it. By contrast, plain objects are traversed recursively.
+
+ID-keyed records work because IDs are ordinary object keys. CAM does not inspect an `id` property inside an array and does not infer element identity. Also, when both sides add the same previously absent property with different objects, CAM reports one conflict at that property instead of recursively combining two independently created objects.
+
 ## Install
 
 ```bash
@@ -75,6 +95,132 @@ With a real backend, capture `originalState` when editing begins and create `sub
 | `currentServerState` | Latest server state fetched after the stale-write rejection. |
 
 For each path, CAM keeps the side that changed. If both sides made the same change, it keeps that value. If they made different changes, it reports a conflict. Nested plain objects can merge at different paths; arrays are atomic, so two different array edits conflict at the array path.
+
+
+## Data-shape examples
+
+### Deeply nested objects and ID-keyed records
+
+Independent edits inside existing nested objects merge recursively, including records whose keys are IDs:
+
+```js
+import { mergeStates } from "conflict-aware-mutation"
+
+const result = mergeStates({
+  originalState: {
+    profile: {
+      address: { city: "Cairo", street: "Tahrir" },
+    },
+    products: {
+      p1: { name: "Desk", price: 100 },
+      p2: { name: "Lamp", price: 40 },
+    },
+  },
+  submittedState: {
+    profile: {
+      address: { city: "Giza", street: "Tahrir" },
+    },
+    products: {
+      p1: { name: "Standing Desk", price: 100 },
+      p2: { name: "Lamp", price: 40 },
+    },
+  },
+  currentServerState: {
+    profile: {
+      address: { city: "Cairo", street: "Corniche" },
+    },
+    products: {
+      p1: { name: "Desk", price: 110 },
+      p2: { name: "Lamp", price: 40 },
+    },
+  },
+})
+
+console.log(result)
+```
+
+Expected result:
+
+```js
+{
+  ok: true,
+  value: {
+    products: {
+      p1: { name: "Standing Desk", price: 110 },
+      p2: { name: "Lamp", price: 40 },
+    },
+    profile: {
+      address: { city: "Giza", street: "Corniche" },
+    },
+  },
+  conflicts: [],
+}
+```
+
+Here `p1` and `p2` are just object keys. CAM does not require or infer a special record schema.
+
+### Arrays of objects are atomic
+
+Even when objects inside the array have `id` fields, CAM does not merge different array elements independently:
+
+```js
+import { mergeStates } from "conflict-aware-mutation"
+
+const result = mergeStates({
+  originalState: {
+    items: [
+      { id: "a", qty: 1 },
+      { id: "b", qty: 1 },
+    ],
+  },
+  submittedState: {
+    items: [
+      { id: "a", qty: 2 },
+      { id: "b", qty: 1 },
+    ],
+  },
+  currentServerState: {
+    items: [
+      { id: "a", qty: 1 },
+      { id: "b", qty: 3 },
+    ],
+  },
+})
+
+console.log(result)
+```
+
+Expected result:
+
+```js
+{
+  ok: false,
+  kind: "conflict",
+  conflicts: [
+    {
+      path: ["items"],
+      submitted: {
+        exists: true,
+        value: [
+          { id: "a", qty: 2 },
+          { id: "b", qty: 1 },
+        ],
+      },
+      currentServer: {
+        exists: true,
+        value: [
+          { id: "a", qty: 1 },
+          { id: "b", qty: 3 },
+        ],
+      },
+    },
+  ],
+}
+```
+
+A one-sided array change is accepted, and identical array changes on both sides are accepted. Different changes on both sides conflict at the array path.
+
+These merge results are structural only. Your application still owns server-side validation and must retry writes with the latest version, ETag, or equivalent optimistic-concurrency precondition.
 
 ## API
 
