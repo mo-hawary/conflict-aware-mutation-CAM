@@ -23,6 +23,14 @@ try {
   mkdirSync(packDir, { recursive: true })
   mkdirSync(consumerDir, { recursive: true })
 
+  const dryRunJson = run(
+    "npm",
+    ["pack", "--dry-run", "--json"],
+    { capture: true },
+  )
+  const dryRun = JSON.parse(dryRunJson)[0]
+  assert(dryRun, "npm pack --dry-run did not return package metadata")
+
   const packedJson = run(
     "npm",
     ["pack", "--json", "--pack-destination", packDir],
@@ -31,10 +39,17 @@ try {
   const packed = JSON.parse(packedJson)[0]
   assert(packed, "npm pack did not return package metadata")
 
+  const dryRunPaths = dryRun.files.map((file) => file.path).sort()
+  const packedPaths = packed.files.map((file) => file.path).sort()
+  assert.deepEqual(
+    dryRunPaths,
+    packedPaths,
+    "npm pack --dry-run manifest differs from the real tarball manifest",
+  )
+
   const tarball = path.join(packDir, packed.filename)
   assert(existsSync(tarball), `packed tarball missing: ${tarball}`)
 
-  const packedPaths = packed.files.map((file) => file.path).sort()
   for (const required of ["dist/index.js", "dist/index.d.ts", "src/index.ts"]) {
     assert(packedPaths.includes(required), `required packed file missing: ${required}`)
   }
@@ -176,11 +191,15 @@ void result
   })
 
   console.log("Package verification passed")
+  console.log("npm pack --dry-run")
+  console.log(`dry-run compressed: ${dryRun.size} bytes`)
+  console.log(`dry-run unpacked: ${dryRun.unpackedSize} bytes`)
+  console.log(`dry-run files: ${dryRun.files.length}`)
+  for (const file of dryRunPaths) console.log(`  ${file}`)
   console.log(`tarball: ${packed.filename}`)
   console.log(`compressed: ${packed.size} bytes`)
   console.log(`unpacked: ${packed.unpackedSize} bytes`)
   console.log(`files: ${packed.files.length}`)
-  for (const file of packedPaths) console.log(`  ${file}`)
 } finally {
   rmSync(tempRoot, { recursive: true, force: true })
 }
