@@ -2,6 +2,17 @@
 
 Release Please maintains the versioned entries below. Source on `main` may be ahead of the latest release. See the [migration guide](./docs/migration.md) for the validation/error changes following 0.1.x and [RELEASING.md](./RELEASING.md) for versioning policy.
 
+## [0.2.0](https://github.com/mo-hawary/conflict-aware-mutation-CAM/compare/v0.1.2...v0.2.0) (2026-09-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* CAMConfigError extends Error instead of TypeError. Catch CAMConfigError or use code CAM_CONFIG_ERROR. Enumerable object accessors, array-index accessors, Array subclasses, sparse arrays, non-enumerable array indices and extra enumerable non-index array properties are rejected. Non-enumerable object properties and non-enumerable extra array properties are ignored. See docs/migration.md.
+
+### Bug Fixes
+
+* harden merge validation, speed up mergeStates, and expand docs, examples, and CI ([#30](https://github.com/mo-hawary/conflict-aware-mutation-CAM/issues/30)) ([168bf8c](https://github.com/mo-hawary/conflict-aware-mutation-CAM/commit/168bf8c1e87ca9a585ad75365dfcb958224d988b))
+
 ## [0.1.2](https://github.com/mo-hawary/conflict-aware-mutation-CAM/compare/v0.1.1...v0.1.2) (2026-09-27)
 
 
