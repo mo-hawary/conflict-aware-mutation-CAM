@@ -22,7 +22,8 @@ CAM supports deeply nested JSON objects, including records keyed by IDs. It recu
 | Arrays, including arrays of objects | Yes | Atomic at the array path; no element-by-element merge |
 | Property additions and deletions | Yes | Compared per object property; absence is distinct from `null` |
 | `Date`, `Map`, `Set`, class instances, `BigInt`, `undefined`, functions, symbols, non-finite numbers | No | Rejected with `CAMConfigError` |
-| Sparse arrays and symbol-keyed properties | No | Rejected with `CAMConfigError` |
+| Sparse arrays, `Array` subclasses, arrays with extra properties, and symbol-keyed properties | No | Rejected with `CAMConfigError` |
+| Getter/setter (accessor) properties | No | Rejected with `CAMConfigError` without being invoked |
 | Cyclic references | No | Rejected with `CAMConfigError` |
 | Nesting deeper than 512 levels | No | Rejected with `CAMConfigError` |
 
@@ -269,7 +270,15 @@ const result = mergeStates({
 
 On success, the result is `{ ok: true, value, conflicts: [] }`. On a conflict, it is `{ ok: false, kind: "conflict", conflicts }` and has no partial `value` to save. Conflict paths are arrays of segments, such as `["shippingAddress", "city"]`; a key containing a dot stays one segment. `exists: false` means the property was deleted, which differs from `{ exists: true, value: null }`.
 
-CAM accepts JSON-compatible primitives, arrays, and plain objects. It rejects `undefined`, non-finite numbers, `Date`, class instances, symbols, cycles, and nesting beyond 512 levels with `CAMConfigError`. Invalid input is a programmer error; an ordinary concurrent edit returns a conflict result. CAM does not mutate its inputs. Merged object keys and conflict paths have deterministic sorted order.
+CAM accepts JSON-compatible primitives, arrays, and plain objects. It rejects `undefined`, non-finite numbers, `Date`, class instances, symbols, getters, cycles, and nesting beyond 512 levels with `CAMConfigError`. Invalid input is a programmer error; an ordinary concurrent edit returns a conflict result. `CAMConfigError` extends `Error` (not `TypeError`) and has `code: "CAM_CONFIG_ERROR"`.
+
+CAM reads each input property once into a private copy, so it never mutates your inputs and the result never shares objects with them. Merged object keys and conflict paths have deterministic sorted order, and `-0` becomes `0`.
+
+### TypeScript notes
+
+`mergeStates<T extends JsonValue>()` checks that your state type is JSON-compatible. Declare state shapes with a `type` alias rather than an `interface`; interfaces have no implicit index signature, so TypeScript rejects them as `JsonValue`.
+
+The merged `value` is typed as `T`, but a per-field merge can combine fields that are each valid yet invalid together. For example, if the user switches `{ kind: "card", last4 }` to `{ kind: "bank", iban }` while the server adds a card-only field, the merge succeeds with a `"bank"` object that still has the card field. Validate merged values against your domain rules before saving when such invariants matter.
 
 ## Integration responsibilities
 
@@ -286,6 +295,7 @@ npm run test:coverage   # suite with coverage thresholds
 npm run lint:package    # publint + are-the-types-wrong
 npm run size            # bundle size budget
 npm run examples        # runnable end-to-end example
+npm run bench           # representative mergeStates() benchmarks
 ```
 
 Full API reference: <https://mo-hawary.github.io/conflict-aware-mutation-CAM/>. Integration examples, including fetch/REST and TanStack Query with React, are in [`examples/`](./examples/README.md).

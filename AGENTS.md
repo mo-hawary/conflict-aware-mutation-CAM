@@ -61,6 +61,12 @@ Reject in v1:
 - cyclic references
 - `NaN`
 - `Infinity` / `-Infinity`
+- accessor (getter/setter) properties, rejected without invoking them
+- `Array` subclasses, sparse arrays, and arrays with extra non-index properties
+
+Validation reads every input property exactly once, through its own data descriptor, into a private snapshot. Merging operates only on that snapshot, so a proxy or getter cannot make the merged value differ from the validated value.
+
+Null-prototype objects are accepted; output objects always use `Object.prototype`. Shared (non-cyclic) references are treated as independent copies, as `JSON.stringify` would.
 
 Property absence represents deletion. Property absence and `null` are distinct states.
 
@@ -259,7 +265,7 @@ Throw for invalid usage/configuration:
 - invalid option value
 - malformed path/config object
 
-Public validation/configuration failures use `CAMConfigError`. Reserve `TypeError` for internal invariant failures.
+Public validation/configuration failures use `CAMConfigError`, which extends `Error` (not `TypeError`) and carries `code: "CAM_CONFIG_ERROR"`. Reserve `TypeError` for internal invariant failures so the two stay distinguishable.
 
 Return `ok: false, kind: "conflict"` only for valid state inputs with a genuine concurrent path collision.
 
@@ -332,7 +338,7 @@ Every bug fix must include a regression test.
 - Be prototype-pollution-safe when traversing or constructing objects.
 - Never mutate `originalState`, `submittedState`, or `currentServerState`.
 - Keep output deterministic: merged object keys are always sorted (input key order is not preserved), and conflicts are emitted in sorted path order.
-- Treat `-0` and `0` as equal.
+- Treat `-0` and `0` as equal. Output contains `0`, never `-0`.
 - Reject symbol-keyed properties.
 - Depth strategy for v1: validation rejects nesting deeper than 512 levels with `CAMConfigError`, which bounds all recursive traversal.
 
