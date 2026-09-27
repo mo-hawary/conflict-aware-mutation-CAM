@@ -4,7 +4,6 @@ CAM helps a client recover when a backend rejects a stale write. It checks wheth
 
 CAM is a small, headless TypeScript library with no runtime dependencies. It does not make requests, retry writes, or render a conflict UI.
 
-
 ## Supported data and merge granularity
 
 CAM supports deeply nested JSON objects, including records keyed by IDs. It recursively merges independent object-field changes. Arrays are valid input but are atomic merge values: CAM does not merge array elements by index or inferred identity. Specialized JavaScript values such as `Date`, `Map`, and `Set` are unsupported.
@@ -12,11 +11,12 @@ CAM supports deeply nested JSON objects, including records keyed by IDs. It recu
 | Data shape | Accepted? | Merge behavior |
 | --- | --- | --- |
 | JSON primitives (`string`, finite `number`, `boolean`, `null`) | Yes | Atomic value |
-| Nested plain objects | Yes | Recursively merges independent object-field changes |
+| Nested plain objects, including null-prototype objects | Yes | Recursively merges independent object-field changes; output objects use the ordinary `Object.prototype` |
 | Records keyed by IDs, for example `products["p1"]` | Yes | Ordinary object-key recursion; keys act as paths |
 | Arrays, including arrays of objects | Yes | Atomic at the array path; no element-by-element merge |
 | Property additions and deletions | Yes | Compared per object property; absence is distinct from `null` |
 | `Date`, `Map`, `Set`, class instances, `BigInt`, `undefined`, functions, symbols, non-finite numbers | No | Rejected with `CAMConfigError` |
+| Sparse arrays and symbol-keyed properties | No | Rejected with `CAMConfigError` |
 | Cyclic references | No | Rejected with `CAMConfigError` |
 | Nesting deeper than 512 levels | No | Rejected with `CAMConfigError` |
 
@@ -95,7 +95,6 @@ With a real backend, capture `originalState` when editing begins and create `sub
 | `currentServerState` | Latest server state fetched after the stale-write rejection. |
 
 For each path, CAM keeps the side that changed. If both sides made the same change, it keeps that value. If they made different changes, it reports a conflict. Nested plain objects can merge at different paths; arrays are atomic, so two different array edits conflict at the array path.
-
 
 ## Data-shape examples
 
