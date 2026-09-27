@@ -86,11 +86,13 @@ export function normalizeErrorOutput(value: unknown): ErrorOutput {
 /**
  * Validates `value` as CAM v1 JSON and returns a private deep copy.
  *
- * Values included in the copy come from own data-property descriptors, and
- * mergeStates only operates on that validated copy. Proxy traps can run while
- * keys and descriptors are discovered; CAM does not promise a trap count.
+ * Like `JSON.stringify`, only own enumerable properties are part of the
+ * snapshot; non-enumerable ones are ignored and their getters never run.
+ * Each included value is read once, through its own data descriptor, and the merge only ever sees the
+ * copy, so a getter or proxy cannot make it differ from what was validated.
  * The copy is canonical: object keys are inserted in sorted order and `-0`
- * becomes `0`.
+ * becomes `0`, so two snapshots with the same key set enumerate keys in the
+ * same order.
  */
 export function snapshotJsonValue(value: unknown, label = "value"): JsonValue {
   const ancestors = new Set<object>()
@@ -98,6 +100,19 @@ export function snapshotJsonValue(value: unknown, label = "value"): JsonValue {
 
   const fail = (reason: string): never => {
     throw new CAMConfigError(`${formatPath(label, path)} ${reason}`)
+  }
+
+  // `missing` explains a key that has no own property: an array hole, or an
+  // object key a proxy reported and then withdrew.
+  const readData = (source: object, key: string, missing: string): unknown => {
+    const descriptor = Object.getOwnPropertyDescriptor(source, key)
+    if (descriptor === undefined) {
+      return fail(missing)
+    }
+    if (!("value" in descriptor)) {
+      return fail("must not be an accessor (getter/setter) property")
+    }
+    return descriptor.value
   }
 
   const visit = (current: unknown, depth: number): JsonValue => {
@@ -133,69 +148,31 @@ export function snapshotJsonValue(value: unknown, label = "value"): JsonValue {
       fail("must contain only plain objects and arrays")
     }
 
-    const ownKeys = Reflect.ownKeys(source)
-    if (ownKeys.some((key) => typeof key === "symbol")) {
+    if (Object.getOwnPropertySymbols(source).length > 0) {
       fail("must not contain symbol-keyed properties")
     }
 
-    // Capture each own descriptor once and use that same descriptor to decide
-    // whether the property participates in JSON and to obtain its value. A
-    // proxy may provide unusual but valid descriptors; whatever is copied is
-    // still validated recursively before the merge sees it.
-    const descriptors = new Map<string, PropertyDescriptor>()
-    for (const key of ownKeys as string[]) {
-      const descriptor = Object.getOwnPropertyDescriptor(source, key)
-      if (descriptor === undefined) {
-        return fail(`property ${JSON.stringify(key)} changed during validation`)
-      }
-      if (!("value" in descriptor)) {
-        path.push(key)
-        fail("must not be an accessor (getter/setter) property")
-      }
-      descriptors.set(key, descriptor)
-    }
-
+    const keys = Object.keys(source)
     ancestors.add(source)
 
     let copy: JsonValue
     if (isArray) {
-      const lengthDescriptor = descriptors.get("length")
-      if (lengthDescriptor === undefined || !("value" in lengthDescriptor)) {
-        return fail("must have a valid array length")
-      }
-      const length = lengthDescriptor.value
-      if (!Number.isInteger(length) || length < 0 || length > 0xffff_ffff) {
-        fail("must have a valid array length")
-      }
-
-      const indexKeys = [...descriptors.keys()].filter((key) => key !== "length")
-      const isArrayIndex = (key: string): boolean => {
-        const index = Number(key)
-        return Number.isInteger(index) && index >= 0 && index < length && String(index) === key
-      }
-      if (indexKeys.length !== length || indexKeys.some((key) => !isArrayIndex(key))) {
-        fail("must be an array without holes or extra properties")
-      }
+      const length = (source as unknown[]).length
+      const shape = "must be an array without holes or extra properties"
+      if (keys.length !== length) fail(shape)
       const items: JsonValue[] = new Array(length)
       for (let index = 0; index < length; index += 1) {
         path.push(index)
-        const descriptor = descriptors.get(String(index))
-        if (descriptor === undefined) return fail("is not JSON-compatible (sparse array)")
-        items[index] = visit(descriptor.value, depth + 1)
+        items[index] = visit(readData(source, String(index), shape), depth + 1)
         path.pop()
       }
       copy = items
     } else {
-      const keys = [...descriptors]
-        .filter(([, descriptor]) => descriptor.enumerable)
-        .map(([key]) => key)
-        .sort()
+      keys.sort()
       const object: { [key: string]: JsonValue } = {}
       for (const key of keys) {
         path.push(key)
-        const descriptor = descriptors.get(key)
-        if (descriptor === undefined) return fail("changed during validation")
-        defineJsonProperty(object, key, visit(descriptor.value, depth + 1))
+        defineJsonProperty(object, key, visit(readData(source, key, "changed during validation"), depth + 1))
         path.pop()
       }
       copy = object

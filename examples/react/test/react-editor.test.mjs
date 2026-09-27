@@ -230,6 +230,31 @@ test("applying choices awaits the save, refreshes editor state, and updates cach
   assert.equal(notesInput(entry).value, "mine")
 })
 
+test("reports a network failure without a code as a save error", async () => {
+  const puts = []
+  const api = {
+    fetchOrder: async () => loaded(order(), "e1"),
+    putOrder: async (_id, state, etag) => {
+      puts.push({ state: structuredClone(state), etag })
+      if (puts.length === 1) throw new TypeError("Failed to fetch")
+      return loaded(structuredClone(state), "e2")
+    },
+  }
+  const entry = await mountEditor("one", api)
+  changeNotes(entry, "mine")
+  await submit(entry)
+  await waitFor(() => assert.equal(entry.getByRole("alert").textContent, "Unable to save. Review the request and try again."))
+  assert.equal(entry.container.querySelector("fieldset"), null, "a network failure is not a conflict")
+  const [failed] = entry.client.getMutationCache().getAll()
+  assert.ok(failed.state.error instanceof TypeError, "the original error is rethrown, not a CAMConfigError")
+  assert.equal(failed.state.error.message, "Failed to fetch")
+
+  await submit(entry)
+  await waitForPuts(puts, 2)
+  assert.equal(puts[1].etag, "e1")
+  assert.equal(puts[1].state.notes, "mine")
+})
+
 test("keeps the conflict visible and reports a failed resolved request", async () => {
   const fetchQueue = [loaded(order({ notes: "original" }), "e1"), loaded(order({ notes: "server" }), "e2")]
   let putCount = 0

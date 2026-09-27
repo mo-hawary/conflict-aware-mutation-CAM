@@ -57,4 +57,4 @@ See [RELEASING.md](./RELEASING.md) for the complete release flow.
 
 ## API documentation deployment
 
-The API docs workflow builds on pull requests and deploys from `main`. In repository Settings → Pages → Build and deployment, the source must be **GitHub Actions**. This repository setting is not available through the checks performed for this PR, so confirm it manually before relying on the first Pages deployment.
+The API docs workflow builds on pull requests and deploys from `main`. It requires repository Settings → Pages → Build and deployment → Source to be **GitHub Actions**.

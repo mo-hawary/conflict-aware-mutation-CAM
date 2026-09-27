@@ -455,19 +455,21 @@ test("rejects accessor properties without invoking them", () => {
   assert.equal(reads, 0)
 })
 
-test("rejects non-enumerable object accessors without invoking them", () => {
+test("ignores non-enumerable properties without invoking them", () => {
+  // Matches JSON.stringify: non-enumerable properties are not part of the data.
   let reads = 0
-  const withHiddenGetter = { a: 0 }
-  Object.defineProperty(withHiddenGetter, "hidden", {
+  const withHidden = { a: 0 }
+  Object.defineProperty(withHidden, "getter", {
     get: () => {
       reads += 1
       return 1
     },
   })
+  Object.defineProperty(withHidden, "data", { value: "hidden" })
 
-  assert.throws(
-    () => mergeStates({ originalState: {}, submittedState: withHiddenGetter, currentServerState: {} }),
-    (error) => error instanceof CAMConfigError && /accessor/.test(error.message),
+  assert.deepEqual(
+    mergeStates({ originalState: { a: 0 }, submittedState: withHidden, currentServerState: { a: 0 } }),
+    { ok: true, value: { a: 0 }, conflicts: [] },
   )
   assert.equal(reads, 0)
 })
@@ -509,17 +511,20 @@ test("merges exactly the value it validated", () => {
   assert.equal(propertyReads, 0)
 })
 
-test("rejects a proxy property that disappears during descriptor inspection", () => {
+test("rejects a proxy property that disappears after key enumeration", () => {
+  let lookups = 0
   const proxy = new Proxy({ a: 0 }, {
     getOwnPropertyDescriptor(target, key) {
-      if (key === "a") return undefined
-      return Reflect.getOwnPropertyDescriptor(target, key)
+      lookups += 1
+      return lookups === 1 ? Reflect.getOwnPropertyDescriptor(target, key) : undefined
     },
   })
 
   assert.throws(
     () => mergeStates({ originalState: {}, submittedState: proxy, currentServerState: {} }),
-    (error) => error instanceof CAMConfigError,
+    (error) =>
+      error instanceof CAMConfigError &&
+      error.message === 'submittedState["a"] changed during validation',
   )
 })
 
@@ -536,13 +541,13 @@ test("rejects Array subclasses and arrays with extra properties", () => {
   }
 })
 
-test("rejects non-enumerable extra array properties", () => {
-  const items = [1]
+test("ignores non-enumerable extra array properties", () => {
+  const items = [1, 2]
   Object.defineProperty(items, "label", { value: "hidden" })
 
-  assert.throws(
-    () => mergeStates({ originalState: { items: [1] }, submittedState: { items }, currentServerState: { items: [1] } }),
-    (error) => error instanceof CAMConfigError && /extra properties/.test(error.message),
+  assert.deepEqual(
+    mergeStates({ originalState: { items: [1] }, submittedState: { items }, currentServerState: { items: [1] } }),
+    { ok: true, value: { items: [1, 2] }, conflicts: [] },
   )
 })
 
@@ -626,6 +631,6 @@ test("rejects a sparse array whose extra property hides the hole count", () => {
 
   assert.throws(
     () => mergeStates({ originalState: { items: [1, 2, 3] }, submittedState: { items }, currentServerState: { items: [1, 2, 3] } }),
-    (error) => error instanceof CAMConfigError && /(holes|extra properties)/.test(error.message),
+    (error) => error instanceof CAMConfigError && error.message.startsWith('submittedState["items"][1] ') && /holes/.test(error.message),
   )
 })

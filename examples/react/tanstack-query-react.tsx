@@ -19,6 +19,13 @@ export type OrderApi = {
   putOrder(id: string, state: Order, etag: string): Promise<Loaded>
 }
 
+// API failures carry a string `code`. Anything else (for example a fetch
+// network TypeError) is not a CAM error signal and is rethrown untouched.
+function toErrorSignal(error: unknown): { code: string } | null {
+  const code = (error as { code?: unknown } | null | undefined)?.code
+  return typeof code === "string" ? { code } : null
+}
+
 class ConflictNeedsDecision extends Error {
   constructor(
     readonly conflicts: Conflict[],
@@ -38,8 +45,10 @@ export function useSaveOrder(id: string, api: OrderApi) {
       try {
         return await api.putOrder(id, submittedState, etag)
       } catch (error) {
-        const match = matchConflictError({ error: error as { code: string }, expectedError: { code: "STALE_WRITE" } })
-        if (!match.matched) throw match.error
+        const signal = toErrorSignal(error)
+        if (!signal || !matchConflictError({ error: signal, expectedError: { code: "STALE_WRITE" } }).matched) {
+          throw error
+        }
 
         const latest = await api.fetchOrder(id)
         const inputs = { originalState, submittedState, currentServerState: latest.state }
@@ -114,7 +123,8 @@ function Editor({ id, api, original }: { id: string; api: OrderApi; original: Lo
         value={draft.notes}
         onChange={(event) => {
           revisionRef.current += 1
-          setDraft({ ...draft, notes: event.target.value })
+          const notes = event.target.value
+          setDraft((current) => ({ ...current, notes }))
         }}
       />
       <button type="submit" disabled={save.isPending}>Save</button>

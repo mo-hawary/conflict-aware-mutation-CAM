@@ -22,9 +22,9 @@ CAM supports deeply nested JSON objects, including records keyed by IDs. It recu
 | Arrays, including arrays of objects | Yes | Atomic at the array path; no element-by-element merge |
 | Property additions and deletions | Yes | Compared per object property; absence is distinct from `null` |
 | `Date`, `Map`, `Set`, class instances, `BigInt`, `undefined`, functions, symbols, non-finite numbers | No | Rejected with `CAMConfigError` |
-| Sparse arrays, `Array` subclasses, arrays with extra own properties (including non-enumerable ones), and symbol-keyed properties | No | Rejected with `CAMConfigError` |
-| Getter/setter (accessor) properties, including non-enumerable ones | No | Rejected with `CAMConfigError` without being invoked |
-| Non-enumerable data properties on plain objects | Ignored | Only enumerable object properties are part of the JSON snapshot |
+| Sparse arrays, `Array` subclasses, arrays with extra properties, and symbol-keyed properties | No | Rejected with `CAMConfigError` |
+| Getter/setter (accessor) properties | No | Rejected with `CAMConfigError` without being invoked |
+| Non-enumerable properties | Ignored | Not part of the JSON data, as with `JSON.stringify`; getters are never invoked |
 | Cyclic references | No | Rejected with `CAMConfigError` |
 | Nesting deeper than 512 levels | No | Rejected with `CAMConfigError` |
 
@@ -275,13 +275,13 @@ On success, the result is `{ ok: true, value, conflicts: [] }`. On a conflict, i
 
 CAM accepts JSON-compatible primitives, arrays, and plain objects. It rejects `undefined`, non-finite numbers, `Date`, class instances, symbols, accessors, cycles, sparse arrays, `Array` subclasses, arrays with extra own properties, and nesting beyond 512 levels with `CAMConfigError`. Invalid input is a programmer error; an ordinary concurrent edit returns a conflict result. `CAMConfigError` extends `Error` (not `TypeError`) and has `code: "CAM_CONFIG_ERROR"`.
 
-CAM copies validated own data-property values into private snapshots before merging. The merge only sees those snapshots, so a proxy cannot change the values after validation. Proxy traps may run while CAM enumerates keys and obtains descriptors; their exact call counts are not part of the contract. CAM never mutates your inputs, and the result never shares objects with them. Merged object keys and conflict paths have deterministic sorted order, and `-0` becomes `0`.
+CAM reads each included property once, through its own data descriptor, into a private copy. The merge only sees that copy, so a getter or proxy cannot change a value after validation. CAM never mutates your inputs, and the result never shares objects with them. Merged object keys and conflict paths have deterministic sorted order, and `-0` becomes `0`.
 
 ### Migration from 0.1.x
 
 `CAMConfigError` now extends `Error` directly instead of `TypeError`. Replace `error instanceof TypeError` checks for invalid CAM inputs with `error instanceof CAMConfigError`, or check `error.code === "CAM_CONFIG_ERROR"`. The class and code distinguish public validation failures from internal `TypeError` invariant failures.
 
-Validation now rejects accessor properties, including hidden getters and setters, without invoking them. It also rejects `Array` subclasses, sparse arrays, and arrays with extra own properties (including non-enumerable properties). Normalize these inputs into plain JSON data before calling CAM. Hidden non-enumerable data properties on plain objects remain outside the JSON snapshot and are ignored.
+Validation now rejects enumerable getter/setter properties without invoking them, as well as `Array` subclasses, sparse arrays, and arrays with extra properties. Normalize these inputs into plain JSON data before calling CAM. Non-enumerable properties are ignored, as with `JSON.stringify`.
 
 ### TypeScript notes
 
