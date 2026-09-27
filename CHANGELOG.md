@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/mo-hawary/conflict-aware-mutation-CAM/compare/v0.1.1...v0.1.2) (2026-09-27)
+
+
+### Bug Fixes
+
+* **npm:** correct the public package summary ([#17](https://github.com/mo-hawary/conflict-aware-mutation-CAM/issues/17)) ([629601e](https://github.com/mo-hawary/conflict-aware-mutation-CAM/commit/629601e69ac7262cb9789e83c608f315bcf273f7))
+
 ## [0.1.1](https://github.com/mo-hawary/conflict-aware-mutation-CAM/compare/v0.1.0...v0.1.1) (2026-09-27)
 
 
