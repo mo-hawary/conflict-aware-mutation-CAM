@@ -6,6 +6,47 @@ It is designed for the common case where a user edits a record, another actor ch
 
 > Status: active pre-public implementation. The TypeScript v1 core is implemented on `main` and the first GitHub release is `v0.1.0`. The npm package remains unpublished and `package.json` is still `"private": true`. `matchConflictError()` and `mergeStates()` are the current public runtime primitives. Convenience adapters, property/fuzz testing, benchmarks, and Rust/WASM work remain roadmap items.
 
+## Install and compatibility
+
+CAM is an early `0.x` library and is **not yet published on npm**. After the registry artifact is verified, install it with:
+
+```bash
+npm install conflict-aware-mutation
+```
+
+- Supported/tested Node.js versions: **22 and 24**.
+- Package format: **ESM only**. There is no CommonJS build.
+- Runtime exports: `CAMConfigError`, `matchConflictError()`, and `mergeStates()`.
+- TypeScript declarations are published with the package.
+- Not currently included: `resolveConflict()`, HTTP/UI/framework adapters, identity-aware array merging, CommonJS, or Rust/WASM.
+
+### Minimal package-name example
+
+```js
+import { matchConflictError, mergeStates } from "conflict-aware-mutation"
+
+const match = matchConflictError({
+  error: { code: 409, text: "Order was modified" },
+  expectedError: { code: 409 },
+})
+
+if (match.matched) {
+  const merged = mergeStates({
+    originalState: { name: "A", status: "draft" },
+    submittedState: { name: "B", status: "draft" },
+    currentServerState: { name: "A", status: "approved" },
+  })
+
+  if (merged.ok) {
+    console.log(merged.value)
+    // { name: "B", status: "approved" }
+  }
+}
+```
+
+When an application retries a safe merged value, it must still enforce the backend's optimistic-concurrency precondition (for example a version/ETag check). Fetching `currentServerState` does not prevent another write from winning before the retry.
+
+
 ## The problem
 
 Imagine two admins editing the same order:
@@ -561,7 +602,7 @@ Still planned before a stable v1 release:
 1. property-based tests
 2. fuzz tests over JSON trees
 3. representative benchmarks
-4. release/package compatibility validation
+4. broader browser/bundler compatibility evidence before expanding compatibility claims
 
 Any bug fix should include a regression test.
 

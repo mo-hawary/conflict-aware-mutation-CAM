@@ -21,7 +21,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "src"
   ],
   "scripts": {
     "clean": "rm -rf dist",
@@ -31,7 +32,8 @@
     "prepack": "npm run build",
     "typecheck:tests": "tsc -p tsconfig.test.json",
     "pack:check": "npm pack --dry-run",
-    "prepublishOnly": "npm test"
+    "prepublishOnly": "npm test && npm run package:verify",
+    "package:verify": "node scripts/verify-package.mjs"
   },
   "devDependencies": {
     "typescript": "7.0.2"
