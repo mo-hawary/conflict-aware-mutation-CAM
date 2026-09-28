@@ -51,6 +51,7 @@ See [the launch record](./OPEN_SOURCE_LAUNCH.md) for the dated evidence. Verify 
 
 - **Workflow/account failure before npm accepts the version:** fix only the account/environment configuration and rerun/dispatch the same existing release tag.
 - **The exact version is already on npm:** do not overwrite it. The workflow detects it and verifies the registry installation instead.
+- **Registry verification fails because the workflow itself is wrong (the version is already on npm):** fix the workflow on `main`, then dispatch **Publish npm** from `main` with the existing release tag. Rerunning the original run reuses the tagged workflow file and fails again. The dispatched run skips publication and verifies the registry artifact with the corrected checks.
 - **A code/package defect is discovered after the GitHub release:** fix it on `main` with a regression test and let Release Please create the next version. Never move/reuse the failed release tag.
 - **OIDC/Trusted Publisher mismatch:** verify owner, repository, workflow filename, environment name, direct-publish permission, and that the repository/package are public; then rerun the same release only if npm has not accepted that version.
 

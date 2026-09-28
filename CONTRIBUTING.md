@@ -42,7 +42,7 @@ Every bug fix needs a regression test that fails before the fix. For merge chang
 | Runtime-sensitive behavior | `npm run build`, then `node test/runtime/run.mjs`; the CI runtime job also checks Deno, Bun, and browsers |
 | Performance | `npm run bench`; compare identical workloads and report environment/revisions |
 
-`npm run mutation` runs the slower Stryker checks. Benchmark comparisons are report-only because shared runners are noisy. Avoid treating one timing sample as a performance guarantee.
+`npm run mutation` runs the slower Stryker checks. The `overrides` entry in `package.json` raises `qs` under Stryker's `typed-rest-client` dependency to a patched version; remove it once `@stryker-mutator/core` depends on `typed-rest-client` 3.x. Benchmark comparisons are report-only because shared runners are noisy. Avoid treating one timing sample as a performance guarantee.
 
 ## Pull requests and releases
 
