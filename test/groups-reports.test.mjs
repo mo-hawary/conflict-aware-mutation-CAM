@@ -349,6 +349,55 @@ test("validates group IDs, path uniqueness, overlap, and root paths", () => {
   )
 })
 
+test("explicit undefined optional merge flags behave like omission", () => {
+  const clean = {
+    originalState: { title: "old", serverOnly: false },
+    submittedState: { title: "local", serverOnly: false },
+    currentServerState: { title: "old", serverOnly: true },
+  }
+
+  assert.deepEqual(
+    mergeStates({ ...clean, groups: undefined, includeReport: undefined }),
+    { ok: true, value: { serverOnly: true, title: "local" }, conflicts: [] },
+  )
+
+  const conflicting = {
+    originalState: { status: "pending" },
+    submittedState: { status: "cancelled" },
+    currentServerState: { status: "paid" },
+  }
+  const conflict = mergeStates(conflicting).conflicts[0]
+
+  assert.deepEqual(
+    applyConflictDecisions({
+      ...conflicting,
+      groups: undefined,
+      includeReport: undefined,
+      sessionId: "undefined-options",
+      decisions: [{
+        sessionId: "undefined-options",
+        conflict,
+        choice: "currentServer",
+      }],
+    }),
+    { ok: true, value: { status: "paid" }, conflicts: [] },
+  )
+
+  assert.deepEqual(
+    resolveConflict({
+      error: { code: 409 },
+      expectedError: { code: 409 },
+      ...clean,
+      groups: undefined,
+      includeReport: undefined,
+    }),
+    {
+      matched: true,
+      result: { ok: true, value: { serverOnly: true, title: "local" }, conflicts: [] },
+    },
+  )
+})
+
 test("group paths beneath scalar, null, or array parents merge the parent atomically", () => {
   const rows = { rows: [{ id: 1 }] }
   assert.deepEqual(
