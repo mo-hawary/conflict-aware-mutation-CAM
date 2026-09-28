@@ -45,4 +45,5 @@ export type {
   ResolveConflictInput,
   ResolveConflictReportedResult,
   ResolveConflictResult,
+  ResolveRuntimeResult,
 } from "./types.js"
