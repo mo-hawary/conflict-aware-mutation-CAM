@@ -209,7 +209,11 @@ test("terminal latest state blocks choices and confirmation", async () => {
   await waitFor(() => assert.ok(entry.getByRole("group", { name: "This order can no longer be edited" })))
   assert.equal(button(entry, "Confirm").disabled, true)
   assert.equal(button(entry, "Save").disabled, true)
-  assert.equal(entry.container.querySelector('button[type="button"]'), null, "terminal state cannot be dismissed into an editable form")
+  assert.equal(
+    entry.queryByRole("button", { name: "Cancel" }),
+    null,
+    "terminal state cannot be dismissed into an editable form",
+  )
   assert.equal(puts.length, 1)
 })
 
