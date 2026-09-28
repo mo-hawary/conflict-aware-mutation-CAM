@@ -61,3 +61,9 @@ Pass explicit `groups` to treat related paths as one decision unit. This changes
 ## Recovery adapter import
 
 The optional callback-based controller is imported from `conflict-aware-mutation/recovery`, not the package root. It checks the latest state before producing a review candidate and requires explicit confirmation with the fetched version by default. `autoRetry: "once"` enables one recovery write for a clean merge; it does not remove the backend version precondition.
+
+The controller now accepts `groups` for the same coupled-path semantics used by `mergeStates()`, plus `undefinedObjectProperties: "omit"` for parser-style object properties. In normalized mode, use a broad JSON type until your application validator has re-established the domain type.
+
+When a confirmed or automatic recovery write loses another version race, the `changed-again` outcome includes `candidate`, `currentServerState`, and `latestVersion`. Continue with that server snapshot as the new `originalState` and that version as the new `expectedVersion`; using the older editing baseline can misclassify earlier server-only changes as local edits.
+
+Cancellation and navigation guards prevent obsolete work from starting later side effects. They do not rewrite history: if `mutate()` has already been accepted by the backend, the controller returns `saved` even if the edit session becomes obsolete before the response is processed.
