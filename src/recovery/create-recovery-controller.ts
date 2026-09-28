@@ -1,7 +1,8 @@
 import { CAMConfigError } from "../errors.js"
 import { matchConflictError } from "../match-conflict-error.js"
 import { mergeStates } from "../merge-states.js"
-import type { ErrorSignal, JsonValue } from "../types.js"
+import type { ErrorSignal, JsonValue, PathGroup } from "../types.js"
+import { snapshotJsonValue } from "../validation.js"
 import type {
   CandidateValidation,
   DraftRevision,
@@ -99,6 +100,8 @@ export function createRecoveryController<
     mutate,
     isCurrent,
     autoRetry,
+    groups,
+    undefinedObjectProperties,
   } = config
   const expectedErrorSnapshot = snapshotErrorSignal(expectedError)
   let cancelled = false
@@ -130,6 +133,7 @@ export function createRecoveryController<
     session: Session<S, T, V, E, L>,
     stage: RecoveryStage,
     callback: () => TValue | Promise<TValue>,
+    options: { readonly checkAfterSuccess?: boolean } = {},
   ): Promise<CallbackResult<TValue>> {
     const before = checkCurrent(session)
     if (before) return { stopped: before }
@@ -140,6 +144,7 @@ export function createRecoveryController<
       const afterFailure = checkCurrent(session)
       return afterFailure ? { stopped: afterFailure } : { ok: false, cause }
     }
+    if (options.checkAfterSuccess === false) return { ok: true, value }
     const after = checkCurrent(session)
     return after ? { stopped: after } : { ok: true, value }
   }
@@ -287,7 +292,7 @@ export function createRecoveryController<
     attempt: "initial" | "recovery",
   ): Promise<
     | { readonly kind: "saved"; readonly state: T; readonly version: V }
-  | { readonly kind: "changed-again"; readonly candidate: T; readonly latestVersion: V; readonly sessionId: string }
+  | { readonly kind: "changed-again"; readonly candidate: T; readonly currentServerState: S; readonly latestVersion: V; readonly sessionId: string }
     | { readonly kind: "stale"; readonly cause: unknown }
     | { readonly kind: "stopped"; readonly outcome: RecoveryOutcome<T, S, V, E> }
     | { readonly kind: "failed"; readonly stage: RecoveryStage; readonly cause: unknown }
@@ -298,12 +303,18 @@ export function createRecoveryController<
     if (version === undefined) {
       throw new TypeError("Mutation attempted without a version precondition")
     }
-    const callResult = await call(session, "mutate", () =>
-      mutate(candidate, {
-        entityId: session.identity.entityId,
-        expectedVersion: version,
-        attempt,
-      }),
+    const callResult = await call(
+      session,
+      "mutate",
+      () =>
+        mutate(candidate, {
+          entityId: session.identity.entityId,
+          expectedVersion: version,
+          attempt,
+        }),
+      // Once the backend accepts a write, later navigation/cancellation cannot
+      // undo it. Return the saved result instead of masking it as obsolete.
+      { checkAfterSuccess: false },
     )
     if ("stopped" in callResult) {
       return { kind: "stopped", outcome: callResult.stopped as RecoveryOutcome<T, S, V, E> }
@@ -315,8 +326,9 @@ export function createRecoveryController<
 
     if (attempt === "recovery") {
       const latestVersion = session.latestVersion
-      if (latestVersion === undefined) {
-        throw new TypeError("Recovery write failed without a version")
+      const currentServerState = session.currentServerState
+      if (latestVersion === undefined || currentServerState === undefined) {
+        throw new TypeError("Recovery write failed without a recovery baseline")
       }
       const classified = await call(session, "isStaleError", () =>
         errorSignalFrom(callResult.cause),
@@ -333,7 +345,13 @@ export function createRecoveryController<
           expectedError: expectedErrorSnapshot,
         })
         if (match.matched) {
-          return { kind: "changed-again", candidate, latestVersion, sessionId: session.sessionId }
+          return {
+            kind: "changed-again",
+            candidate,
+            currentServerState,
+            latestVersion,
+            sessionId: session.sessionId,
+          }
         }
       }
       return { kind: "failed", stage: "mutate", cause: callResult.cause }
@@ -365,7 +383,7 @@ export function createRecoveryController<
   ): Promise<RecoveryOutcome<T, S, V, E>> {
     if (cancelled) return { kind: "cancelled" }
     if (busy) return { kind: "busy" }
-    const normalizedInput = readRecoverInput(input)
+    const normalizedInput = readRecoverInput(input, undefinedObjectProperties)
     busy = true
     invalidateActive()
     const currentGeneration = ++generation
@@ -514,9 +532,14 @@ export function createRecoveryController<
         if (latestVersion === undefined) {
           throw new TypeError("Recovery write raced without a known version")
         }
+        const currentServerState = record.session.currentServerState
+        if (currentServerState === undefined) {
+          throw new TypeError("Recovery write raced without a recovery baseline")
+        }
         return {
           kind: "changed-again",
           candidate: record.candidate,
+          currentServerState,
           latestVersion,
           sessionId: record.session.sessionId,
         }
@@ -540,7 +563,11 @@ export function createRecoveryController<
     }
     const latest = fetched.value
     const latestState = readLatestState<S, L>(latest)
-    const currentServerState = snapshot(latestState)
+    const currentServerState = snapshotInput(
+      latestState,
+      "currentServerState",
+      undefinedObjectProperties,
+    ) as S
     session.latest = latest
     session.currentServerState = currentServerState
 
@@ -580,7 +607,8 @@ export function createRecoveryController<
         originalState: session.originalState as JsonValue,
         submittedState: session.submittedState as JsonValue,
         currentServerState: currentServerState as JsonValue,
-      })
+        ...(groups === undefined ? {} : { groups }),
+      } as never)
     } catch (cause) {
       if (cause instanceof CAMConfigError) throw cause
       return { kind: "failed", stage: "merge", cause }
@@ -612,6 +640,7 @@ export function createRecoveryController<
         return {
           kind: "changed-again",
           candidate: prepared.value,
+          currentServerState,
           latestVersion,
           sessionId: session.sessionId,
         }
@@ -651,6 +680,15 @@ function validateOptions<
     throw new CAMConfigError("createRecoveryController options must be an object")
   }
   const autoRetry = readOptionalOwnData<"once">(options, "autoRetry", "autoRetry")
+  const undefinedObjectProperties = readOptionalOwnData<"omit">(
+    options,
+    "undefinedObjectProperties",
+    "undefinedObjectProperties",
+  )
+  const rawGroups = readOptionalOwnData<readonly PathGroup[]>(options, "groups", "groups")
+  const groups = rawGroups === undefined
+    ? undefined
+    : deepFreeze(snapshotJsonValue(rawGroups, "groups")) as unknown as readonly PathGroup[]
   const config = {
     expectedError: readOwnData<RecoveryControllerOptions<S, V, T, E, L>["expectedError"]>(options, "expectedError", "expectedError"),
     errorSignalFrom: readOwnData<RecoveryControllerOptions<S, V, T, E, L>["errorSignalFrom"]>(options, "errorSignalFrom", "errorSignalFrom"),
@@ -663,6 +701,8 @@ function validateOptions<
     mutate: readOwnData<RecoveryControllerOptions<S, V, T, E, L>["mutate"]>(options, "mutate", "mutate"),
     isCurrent: readOwnData<RecoveryControllerOptions<S, V, T, E, L>["isCurrent"]>(options, "isCurrent", "isCurrent"),
     ...(autoRetry === undefined ? {} : { autoRetry }),
+    ...(groups === undefined ? {} : { groups }),
+    ...(undefinedObjectProperties === undefined ? {} : { undefinedObjectProperties }),
   } as RecoveryControllerOptions<S, V, T, E, L>
   const functionNames = [
     "errorSignalFrom",
@@ -682,6 +722,14 @@ function validateOptions<
   }
   if (config.autoRetry !== undefined && config.autoRetry !== "once") {
     throw new CAMConfigError('createRecoveryController autoRetry must be "once"')
+  }
+  if (
+    config.undefinedObjectProperties !== undefined &&
+    config.undefinedObjectProperties !== "omit"
+  ) {
+    throw new CAMConfigError(
+      'createRecoveryController undefinedObjectProperties must be "omit"',
+    )
   }
   matchConflictError({ error: config.expectedError, expectedError: config.expectedError })
   return config
@@ -724,15 +772,15 @@ function snapshotErrorSignal(signal: ErrorSignal): ErrorSignal {
 }
 
 function snapshot<T extends JsonValue>(value: T): T {
-  const result = mergeStates({
-    originalState: value,
-    submittedState: value,
-    currentServerState: value,
-  })
-  if (!result.ok) {
-    throw new TypeError("Equal JSON snapshots unexpectedly produced conflicts")
-  }
-  return deepFreeze(result.value) as T
+  return deepFreeze(snapshotJsonValue(value)) as T
+}
+
+function snapshotInput(
+  value: unknown,
+  label: string,
+  undefinedObjectProperties?: "omit",
+): JsonValue {
+  return deepFreeze(snapshotJsonValue(value, label, undefinedObjectProperties))
 }
 
 function deepFreeze<T extends JsonValue>(value: T): T {
@@ -751,7 +799,10 @@ function readRecoverInput<
   T extends JsonValue,
   V extends RecoveryVersion,
   E extends RecoveryEntityId,
->(input: RecoverInput<S, T, V, E>): RecoverInput<S, T, V, E> {
+>(
+  input: RecoverInput<S, T, V, E>,
+  undefinedObjectProperties?: "omit",
+): RecoverInput<S, T, V, E> {
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
     throw new CAMConfigError("recover input must be an object")
   }
@@ -770,8 +821,16 @@ function readRecoverInput<
     sessionId,
     draftRevision,
     expectedVersion: normalizeVersion(expectedVersion),
-    originalState: snapshot(originalState),
-    submittedState: snapshot(submittedState),
+    originalState: snapshotInput(
+      originalState,
+      "originalState",
+      undefinedObjectProperties,
+    ) as S,
+    submittedState: snapshotInput(
+      submittedState,
+      "submittedState",
+      undefinedObjectProperties,
+    ) as T,
   }
 }
 
