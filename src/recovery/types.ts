@@ -1,4 +1,10 @@
-import type { ErrorSignal, JsonValue, MergeResult } from "../types.js"
+import type {
+  ErrorSignal,
+  JsonValue,
+  JsonValueWithUndefinedObjectProperties,
+  MergeResult,
+  PathGroup,
+} from "../types.js"
 
 export type RecoveryVersion = string | number
 export type RecoveryEntityId = string | number
@@ -100,6 +106,11 @@ export type RecoveryOutcome<
   | {
       readonly kind: "changed-again"
       readonly candidate: T
+      /**
+       * Server snapshot that produced the candidate. Reuse this snapshot
+       * together with latestVersion as the next recovery baseline.
+       */
+      readonly currentServerState: S
       /** Last version fetched; a newer version may now exist on the server. */
       readonly latestVersion: V
       readonly sessionId: string
@@ -160,6 +171,13 @@ export type RecoveryControllerOptions<
   readonly isCurrent: (identity: RecoveryIdentity<E>) => boolean
   /** Omission means review-first. "once" allows one automatic recovery write. */
   readonly autoRetry?: "once"
+  /** Coupled object-property paths forwarded to the recovery merge. */
+  readonly groups?: readonly PathGroup[]
+  /**
+   * Treat own enumerable object properties with value undefined as absent
+   * while snapshotting original, submitted, and latest states.
+   */
+  readonly undefinedObjectProperties?: "omit"
 }
 
 export type RecoverInput<
@@ -172,8 +190,8 @@ export type RecoverInput<
   readonly sessionId: string
   readonly draftRevision: DraftRevision
   readonly expectedVersion: V
-  readonly originalState: S
-  readonly submittedState: T
+  readonly originalState: S | JsonValueWithUndefinedObjectProperties
+  readonly submittedState: T | JsonValueWithUndefinedObjectProperties
 }
 
 export type ReviseCandidateInput = {
