@@ -132,6 +132,22 @@ test("malformed controller options reject accessors without reading option gette
   assert.equal(textGetterCalls, 2)
 })
 
+test("invalid recovery groups fail when the controller is created", () => {
+  const invalidGroups = [
+    [{ id: "g", paths: [] }],
+    [{ id: "g", paths: [[]] }],
+    [{ id: "g", paths: [["item"]] }, { id: "g", paths: [["other"]] }],
+    [{ id: "g1", paths: [["item"]] }, { id: "g2", paths: [["item", "child"]] }],
+    [{ id: "g", paths: [["item", -1]] }],
+  ]
+
+  for (const groups of invalidGroups) {
+    const options = makeOptions({ groups })
+    assert.throws(() => createRecoveryController(options), CAMConfigError)
+    assert.equal(options.events.length, 0)
+  }
+})
+
 test("malformed recover inputs fail before the mutation callback", async () => {
   const cases = [
     null,
