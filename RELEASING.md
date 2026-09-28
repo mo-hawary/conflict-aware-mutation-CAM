@@ -19,7 +19,7 @@ Release Please owns normal version bumps, `.release-please-manifest.json`, `CHAN
 1. Changes land on `main` with a Conventional Commit-compatible squash title.
 2. Release Please opens or updates its release PR.
 3. Required CI passes on that release PR.
-4. The release PR is reviewed and merged.
+4. The release PR is validated and automatically merged when eligible; otherwise it remains open for manual review.
 5. Release Please creates the matching `vX.Y.Z` tag and GitHub Release.
 6. `.github/workflows/publish-npm.yml` checks out that exact tag, verifies tag/version/release identity, runs tests and an installed-tarball consumer check, then publishes through npm Trusted Publishing with provenance.
 7. If the GitHub Release was created with `GITHUB_TOKEN` and the `release` event is suppressed, manually dispatch **Publish npm** with the already-existing GitHub Release tag. The workflow performs the same release validation before publishing.
@@ -102,16 +102,12 @@ Review the generated changelog and packaged README in the release PR. A docs-onl
 
 The API reference deploys from `main` through `.github/workflows/docs.yml`. Configure Settings → Pages → Source as **GitHub Actions**. The docs build runs TypeDoc with isolated pinned TypeScript 6 while the project uses TypeScript 7. API docs on `main` can be ahead of the latest npm release; the npm version badge is not a source-version indicator.
 
-## Automatic approval of release PRs
+## Automatic merging of release PRs
 
-Automatic approval is intended only for verified Release Please changelog/version PRs. It is not configured yet. The current review rule requires `@mo-hawary` as code owner; the last release PR was also authored by that account. GitHub does not allow authors to approve their own PRs, and an approval from `github-actions[bot]` alone does not satisfy this code-owner requirement.
+`.github/workflows/auto-merge-release.yml` merges eligible Release Please PRs after their complete CI workflow succeeds. It uses the existing `RELEASE_PLEASE_TOKEN` for `@mo-hawary` and that account's PR-only review bypass. No separate bot, approval credential, or self-approval is needed. GitHub still enforces required checks and the other protection rules.
 
-To enable automatic approval while retaining Mo as the sole code owner:
+The workflow executes only trusted code from `main`. It verifies the owner account, same-repository release branch, pending-release label, release title, and exact head SHA. Only the four generated release files are accepted: `CHANGELOG.md`, `package.json`, `package-lock.json`, and `.release-please-manifest.json`. Versions must increase consistently; package and lockfile changes must be version-only, and existing changelog history must remain intact. Source, dependency, script, and workflow changes cause validation to fail.
 
-1. Configure Release Please to create PRs through a separate, narrowly scoped GitHub App identity. Its events must trigger the required CI checks.
-2. Configure a separate approval credential for `@mo-hawary`, scoped to this repository and PR reviews. Do not reuse the release-author credential.
-3. Add an approval workflow running trusted code from the default branch. Verify the release App identity, same-repository head, expected Release Please branch, `main` base, and pending-release label. A title, branch name, or label alone is insufficient proof.
-4. Validate the entire diff: permit only generated changelog, manifest, and package version changes; verify matching versions and reject dependency, script, workflow, source, or unrelated lockfile changes. Never execute PR code with the approval credential.
-5. Require successful CI for the exact current head and submit approval for that commit only. Revalidate each update; stale approvals remain dismissed.
+The existing token must belong to `@mo-hawary` and have repository Contents and Pull requests write access plus Actions read access. The workflow fails explicitly if the token is missing or belongs to another identity; it never falls back to `GITHUB_TOKEN`. It does not weaken repository protections. If a release PR already passed CI before this workflow reached `main`, manually dispatch **Auto-merge release PR**, or rerun its CI.
 
-Approval automation does not authorize automatic merging or npm publication. Keep required checks and existing release gates in place. Until the bot identity, credential, and workflow are configured and verified together, release PRs retain the current manual merge process through the owner's existing PR-only review bypass.
+Merging a release PR continues the normal release pipeline: Release Please creates the tag and GitHub Release, which can trigger npm publication subject to the existing `npm` environment and publishing checks. To pause this automation, disable **Auto-merge release PR** in Actions. Unexpected diffs or failed checks leave the PR open for review.

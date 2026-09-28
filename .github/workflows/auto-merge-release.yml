@@ -1,0 +1,39 @@
+name: Auto-merge release PR
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: auto-merge-release
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    if: >-
+      github.repository == 'mo-hawary/conflict-aware-mutation-CAM' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.event == 'pull_request' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_repository.full_name == github.repository &&
+        github.event.workflow_run.head_branch == 'release-please--branches--main--components--conflict-aware-mutation'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Never check out the triggering PR or consume its artifacts/cache.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/heads/main
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Validate and merge release-only changes
+        env:
+          RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+        run: node scripts/auto-merge-release.mjs
