@@ -79,9 +79,9 @@ console.log(result)
 | Recognize the expected conflict error | CAM: `matchConflictError()` |
 | Fetch the latest record and its version | Your application |
 | Merge independent changes or report conflicting paths | CAM: `mergeStates()` |
-| Validate the combined result, resolve conflicts, and save with the latest version | Your application and backend |
+| Validate and review the combined result, resolve conflicts, and save with the latest version | Your application and backend |
 
-CAM performs no network requests, automatic retries, or UI rendering. A second writer can race your retry, so **every write must retain the backend concurrency precondition**.
+The root merge functions perform no network requests or UI rendering. An optional `conflict-aware-mutation/recovery` adapter coordinates caller-supplied callbacks; review is the default, and one automatic recovery retry requires explicit opt-in. A second writer can race confirmation, so **every write must retain the backend concurrency precondition**.
 
 Keep the original snapshot and its version together throughout editing. A background refetch must not attach a new version to an old draft. See the tested [REST and React examples](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/examples/README.md) for the complete lifecycle.
 
@@ -123,7 +123,11 @@ CAM validates into private snapshots and merges those snapshots. Results are det
 
 ## API
 
-Three runtime exports: `mergeStates`, `matchConflictError`, and `CAMConfigError`. Public TypeScript types are exported alongside them.
+The root entry exports `mergeStates`, `matchConflictError`, `resolveConflict`, `applyConflictDecisions`, `formatConflictPath`, and `CAMConfigError`. Public TypeScript types are exported alongside them. The recovery adapter has a separate import so the root entry remains independent of recovery code:
+
+```js
+import { createRecoveryController } from "conflict-aware-mutation/recovery"
+```
 
 ### `mergeStates({ originalState, submittedState, currentServerState })`
 
@@ -150,6 +154,24 @@ Normalize backend errors into own `code` and/or `text` properties first. Each si
 
 An unmatched result is `{ matched: false, error }`. By default, `error` contains the validated backend fields. Set `errorOutput: { text: "Unable to save" }` to replace the text while retaining any backend code. Arbitrary network exceptions are not valid signals: handle or rethrow them before calling CAM.
 
+### `resolveConflict()` and `applyConflictDecisions()`
+
+`resolveConflict()` composes error matching and merging when all three snapshots are already available. It matches the backend error first; an unmatched error is returned without merging. Use `matchConflictError()` separately when the application should fetch `currentServerState` only after a match.
+
+Use `applyConflictDecisions()` after presenting current conflicts. Each choice includes the exact conflict tuple and a `sessionId`; create a new session ID when the draft or snapshots change. CAM recomputes conflicts and rejects stale, missing, duplicate, or mismatched choices. It never selects a side implicitly.
+
+Object properties set to `undefined` remain invalid by default. The explicit `undefinedObjectProperties: "omit"` option is available to `mergeStates()`, `applyConflictDecisions()`, and `resolveConflict()` for parser output where own enumerable object properties with value `undefined` should mean absence. Root values, array entries, and other unsupported values remain strict.
+
+### Coupled paths, reports, and path formatting
+
+For domain values whose fields must be chosen together, pass `groups: [{ id, paths }]` to `mergeStates()`. Grouped calls return a discriminated group conflict with an existence-aware slot for every path; one manual choice selects the whole group. Grouped results have their own `GroupedMergeResult` type.
+
+Pass `includeReport: true` to include optional change provenance on success and conflict results. Unresolved changes have no result slot, and a conflict still has no persistable partial value. `formatConflictPath()` returns an RFC 6901 JSON Pointer for display, including escaped `/` and `~` keys.
+
+### Recovery adapter
+
+`createRecoveryController()` lives at `conflict-aware-mutation/recovery`. It accepts the application's versioned mutation, fetch, preparation, validation, and terminal-state callbacks. A stale mutation fetches the newest state and returns a review candidate or conflicts. The recovery write requires an explicit one-use confirmation token and the latest version. `autoRetry: "once"` is an opt-in for one clean automatic recovery write; it still uses the fetched version and returns `changed-again` if that write loses another race.
+
 ### `CAMConfigError`
 
 Invalid supported-API inputs throw `CAMConfigError`, an `Error` with `code: "CAM_CONFIG_ERROR"`. Ordinary concurrent edits return a conflict result instead. Catch the exported class explicitly; it does not extend `TypeError`.
@@ -162,8 +184,9 @@ Use JSON-compatible `type` aliases for state shapes. Interfaces lack the implici
 
 ## Examples and playground
 
-- [Fetch + REST](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/examples/fetch-rest.mjs): executable ETag conflict, merge, retry, and manual resolution.
-- [React + TanStack Query](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/examples/react/tanstack-query-react.tsx): editing baseline, conflict picker, bounded retry, and preservation of edits during saves.
+- [Fetch + REST](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/examples/fetch-rest.mjs): executable ETag conflict, terminal-state guard, candidate validation, review, manual resolution, and explicit confirmation.
+- [Versioned recovery controller](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/examples/versioned-rest-recovery.mjs): explicit integer version with HTTP 409 and confirmation using the fetched version.
+- [React + TanStack Query](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/examples/react/tanstack-query-react.tsx): candidate review, validation, session-bound conflict choices, and confirmation before recovery writes.
 - [Browser playground](https://github.com/mo-hawary/conflict-aware-mutation-CAM/tree/main/examples/playground): edit all three snapshots and inspect the result. [Run locally](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/examples/playground/README.md).
 
 Examples are application code, not extra runtime exports. Their dependencies do not enter the core package.

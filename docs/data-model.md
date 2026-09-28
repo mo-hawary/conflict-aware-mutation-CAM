@@ -1,8 +1,6 @@
 # Data model and merge examples
 
-CAM compares three complete JSON snapshots. Objects recurse only when a plain object exists at the same path on all three sides. Arrays are atomic values.
-
-
+CAM compares three complete JSON snapshots. Objects recurse only when a plain object exists at the same path on all three sides. Arrays are atomic values. For an application-level dependency between multiple fields, use an explicit path group; CAM does not infer domain relationships.
 ### Deeply nested objects and ID-keyed records
 
 Independent edits inside existing nested objects merge recursively, including records whose keys are IDs:
@@ -125,6 +123,16 @@ Expected result:
 A one-sided array change is accepted, and identical array changes on both sides are accepted. Different changes on both sides conflict at the array path.
 
 These merge results are structural only. Your application still owns server-side validation and must retry writes with the latest version, ETag, or equivalent optimistic-concurrency precondition.
+
+### Coupled paths and reports
+
+When fields must be selected together, configure a group with path-segment arrays. A conflict then contains all group slots and one submitted/current-server choice applies to the entire group. Paths must be non-root, non-overlapping, and must not descend through arrays or scalar parents. Missing object ancestors are supported. Independent fields outside a group still merge normally.
+
+`includeReport: true` adds opt-in provenance for changed paths and groups. Unresolved report entries omit `result`, and the conflict result still has no partial value. `formatConflictPath()` formats path segments as RFC 6901 JSON Pointer for display; it escapes `/` and `~` so keys with punctuation remain unambiguous.
+
+Own enumerable object properties set to `undefined` are rejected by default. A parser that uses this representation for omitted captions can opt into `undefinedObjectProperties: "omit"` on `mergeStates()`, `applyConflictDecisions()`, or `resolveConflict()`. The option treats those object properties as absent while continuing to reject `undefined` at the root, in array slots, and in other unsupported positions.
+
+Identity-aware ID-array merging remains experimental and is not exported. The Phase 7 evaluation is recorded in [`array-by-id-evaluation.md`](../bench/array-by-id-evaluation.md); arrays stay atomic in the supported API.
 
 
 ## Determinism and validation

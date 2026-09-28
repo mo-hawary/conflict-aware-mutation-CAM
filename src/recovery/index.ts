@@ -1,0 +1,21 @@
+export { createRecoveryController } from "./create-recovery-controller.js"
+export type {
+  CandidateValidation,
+  DraftRevision,
+  RecoverInput,
+  RecoveryAttempt,
+  RecoveryContext,
+  RecoveryController,
+  RecoveryControllerOptions,
+  RecoveryEntityId,
+  RecoveryIdentity,
+  RecoveryLatest,
+  RecoveryMutationResult,
+  RecoveryOutcome,
+  RecoverySessionHandle,
+  RecoverySnapshot,
+  RecoveryStage,
+  RecoveryToken,
+  RecoveryVersion,
+  ReviseCandidateInput,
+} from "./types.js"
