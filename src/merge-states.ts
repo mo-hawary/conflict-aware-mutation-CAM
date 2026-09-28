@@ -625,20 +625,19 @@ function mergeSlot(
     return ABSENT
   }
 
-  const submittedOriginal = slotEqual(submitted, original)
-  const currentOriginal = slotEqual(currentServer, original)
-  const submittedCurrent = slotEqual(submitted, currentServer)
-
-  if (submittedOriginal && currentOriginal) return currentServer
-  if (submittedOriginal) {
-    changes?.push(pathChange(path, original, submitted, currentServer, currentServer, "server-only"))
+  // Compare lazily: deep equality dominates merge time, and the common
+  // unchanged subtree needs only the first comparison unless a report is on.
+  if (slotEqual(submitted, original)) {
+    if (changes !== undefined && !slotEqual(currentServer, original)) {
+      changes.push(pathChange(path, original, submitted, currentServer, currentServer, "server-only"))
+    }
     return currentServer
   }
-  if (currentOriginal) {
+  if (slotEqual(currentServer, original)) {
     changes?.push(pathChange(path, original, submitted, currentServer, submitted, "submitted-only"))
     return submitted
   }
-  if (submittedCurrent) {
+  if (slotEqual(submitted, currentServer)) {
     changes?.push(pathChange(path, original, submitted, currentServer, submitted, "identical-both"))
     return submitted
   }
