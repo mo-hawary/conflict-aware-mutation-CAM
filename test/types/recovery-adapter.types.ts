@@ -47,15 +47,16 @@ void strictController.recover({
 })
 
 declare const parserState: JsonValueWithUndefinedObjectProperties
-// @ts-expect-error strict recovery accepts only the declared strict state type
-strictController.recover({
+const parserInput = {
   entityId: "order-1",
   sessionId: "strict-session",
   draftRevision: 0,
   expectedVersion: '"v1"',
   originalState: parserState,
   submittedState: parserState,
-})
+}
+// @ts-expect-error strict recovery accepts only the declared strict state type
+strictController.recover(parserInput)
 
 const normalizedOptions: NormalizedRecoveryControllerOptions<string, string, Latest> = {
   expectedError: { code: 412 },
