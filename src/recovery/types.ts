@@ -129,12 +129,12 @@ export type RecoveryOutcome<
 
 export type RecoveryLatest<L extends RecoverySnapshot = RecoverySnapshot> = L
 
-export type RecoveryControllerOptions<
+type RecoveryControllerBaseOptions<
   S extends JsonValue,
   V extends RecoveryVersion,
-  T extends JsonValue = JsonValue,
-  E extends RecoveryEntityId = RecoveryEntityId,
-  L extends RecoverySnapshot<S> = RecoverySnapshot<S>,
+  T extends JsonValue,
+  E extends RecoveryEntityId,
+  L extends RecoverySnapshot<S>,
 > = {
   /** Exact stale-error matcher. `errorSignalFrom` may return undefined for other errors. */
   readonly expectedError: ErrorSignal
@@ -173,10 +173,44 @@ export type RecoveryControllerOptions<
   readonly autoRetry?: "once"
   /** Coupled object-property paths forwarded to the recovery merge. */
   readonly groups?: readonly PathGroup[]
-  /**
-   * Treat own enumerable object properties with value undefined as absent
-   * while snapshotting original, submitted, and latest states.
-   */
+}
+
+/**
+ * Strict recovery controller configuration. Inputs and callback values remain
+ * typed as the caller's JSON-compatible domain types.
+ */
+export type RecoveryControllerOptions<
+  S extends JsonValue,
+  V extends RecoveryVersion,
+  T extends JsonValue = JsonValue,
+  E extends RecoveryEntityId = RecoveryEntityId,
+  L extends RecoverySnapshot<S> = RecoverySnapshot<S>,
+> = RecoveryControllerBaseOptions<S, V, T, E, L> & {
+  readonly undefinedObjectProperties?: never
+}
+
+/**
+ * Normalized recovery configuration. Because omitting `undefined` object
+ * properties can remove fields that a domain type marks as required, the
+ * controller intentionally exposes normalized state and mutation values as
+ * broad `JsonValue` until application validation narrows them again.
+ */
+export type NormalizedRecoveryControllerOptions<
+  V extends RecoveryVersion,
+  E extends RecoveryEntityId = RecoveryEntityId,
+  L extends RecoverySnapshot<JsonValue> = RecoverySnapshot<JsonValue>,
+> = RecoveryControllerBaseOptions<JsonValue, V, JsonValue, E, L> & {
+  readonly undefinedObjectProperties: "omit"
+}
+
+/** Internal implementation shape shared by strict and normalized overloads. */
+export type RecoveryControllerInternalOptions<
+  S extends JsonValue,
+  V extends RecoveryVersion,
+  T extends JsonValue,
+  E extends RecoveryEntityId,
+  L extends RecoverySnapshot<S>,
+> = RecoveryControllerBaseOptions<S, V, T, E, L> & {
   readonly undefinedObjectProperties?: "omit"
 }
 
@@ -190,8 +224,20 @@ export type RecoverInput<
   readonly sessionId: string
   readonly draftRevision: DraftRevision
   readonly expectedVersion: V
-  readonly originalState: S | JsonValueWithUndefinedObjectProperties
-  readonly submittedState: T | JsonValueWithUndefinedObjectProperties
+  readonly originalState: S
+  readonly submittedState: T
+}
+
+export type NormalizedRecoverInput<
+  V extends RecoveryVersion,
+  E extends RecoveryEntityId,
+> = {
+  readonly entityId: E
+  readonly sessionId: string
+  readonly draftRevision: DraftRevision
+  readonly expectedVersion: V
+  readonly originalState: JsonValueWithUndefinedObjectProperties
+  readonly submittedState: JsonValueWithUndefinedObjectProperties
 }
 
 export type ReviseCandidateInput = {
@@ -213,5 +259,23 @@ export type RecoveryController<
     draftRevision: DraftRevision,
   ): Promise<RecoveryOutcome<T, S, V, E>>
   confirm(token: RecoveryToken): Promise<RecoveryOutcome<T, S, V, E>>
+  cancel(): void
+}
+
+export type NormalizedRecoveryController<
+  V extends RecoveryVersion,
+  E extends RecoveryEntityId = RecoveryEntityId,
+> = {
+  recover(
+    input: NormalizedRecoverInput<V, E>,
+  ): Promise<RecoveryOutcome<JsonValue, JsonValue, V, E>>
+  reviseCandidate(
+    capability: RecoveryToken | RecoverySessionHandle,
+    candidate: JsonValue,
+    draftRevision: DraftRevision,
+  ): Promise<RecoveryOutcome<JsonValue, JsonValue, V, E>>
+  confirm(
+    token: RecoveryToken,
+  ): Promise<RecoveryOutcome<JsonValue, JsonValue, V, E>>
   cancel(): void
 }
