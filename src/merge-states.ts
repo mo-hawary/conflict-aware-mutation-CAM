@@ -281,6 +281,13 @@ function validateGroupPaths(rawGroups: unknown): NormalizedPathGroup[] {
   return normalized
 }
 
+export function snapshotPathGroups(rawGroups: unknown): PathGroup[] {
+  return validateGroupPaths(rawGroups).map(({ id, paths }) => ({
+    id,
+    paths: paths.map(clonePath),
+  }))
+}
+
 function requiredOwnValue(record: Record<string, unknown>, key: string): unknown {
   const descriptor = Object.getOwnPropertyDescriptor(record, key)
   if (descriptor === undefined) return undefined
@@ -311,7 +318,10 @@ export function snapshotMergeStates(
   )
   const undefinedPropertiesValue = requiredOwnValue(record, "undefinedObjectProperties")
   let undefinedObjectProperties: "omit" | undefined
-  if (undefinedPropertiesDescriptor !== undefined) {
+  if (
+    undefinedPropertiesDescriptor !== undefined &&
+    undefinedPropertiesValue !== undefined
+  ) {
     if (undefinedPropertiesValue !== "omit") {
       throw new CAMConfigError('undefinedObjectProperties must be "omit" when provided')
     }
@@ -338,13 +348,17 @@ export function snapshotMergeStates(
 
   const includeReportDescriptor = Object.getOwnPropertyDescriptor(record, "includeReport")
   const includeReportValue = requiredOwnValue(record, "includeReport")
-  if (includeReportDescriptor !== undefined && includeReportValue !== true) {
+  if (
+    includeReportDescriptor !== undefined &&
+    includeReportValue !== undefined &&
+    includeReportValue !== true
+  ) {
     throw new CAMConfigError("includeReport must be true when provided")
   }
 
   const groupsDescriptor = Object.getOwnPropertyDescriptor(record, "groups")
   const groupsValue = requiredOwnValue(record, "groups")
-  const grouped = groupsDescriptor !== undefined
+  const grouped = groupsDescriptor !== undefined && groupsValue !== undefined
   const groups = grouped ? validateGroupPaths(groupsValue) : []
 
   return { ...snapshots, groups, grouped, includeReport: includeReportValue === true }
