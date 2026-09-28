@@ -429,7 +429,12 @@ test("cancellation during an accepted write does not claim to undo that write", 
   controller.cancel()
   acceptWrite({ state: ready.candidate, version: '"saved"' })
 
-  assert.equal((await confirming).kind, "cancelled")
+  const outcome = await confirming
+  assert.equal(outcome.kind, "saved")
+  if (outcome.kind === "saved") {
+    assert.deepEqual(outcome.state, ready.candidate)
+    assert.equal(outcome.version, '"saved"')
+  }
   assert.equal(
     options.events.filter(([name]) => name === "mutate").length,
     2,
