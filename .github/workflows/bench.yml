@@ -1,13 +1,6 @@
 name: Benchmarks
 
 on:
-  pull_request:
-    paths:
-      - "src/**"
-      - "bench/**"
-      - "tsconfig.json"
-      - "package-lock.json"
-      - ".github/workflows/bench.yml"
   workflow_dispatch:
 
 permissions:

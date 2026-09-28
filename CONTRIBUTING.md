@@ -62,3 +62,7 @@ For breaking changes, include a `BREAKING CHANGE:` footer with migration instruc
 Release Please owns version bumps, the release manifest, generated changelog entries, tags, and GitHub Releases. Do not manually bump a version or move a release tag. See [RELEASING.md](./RELEASING.md).
 
 Contributors follow the [Code of Conduct](./CODE_OF_CONDUCT.md). Contributions are covered by the repository's MIT license.
+
+## CI scheduling
+
+Every PR keeps the required Node 22/24 test and package checks. Runtime and example jobs run when their relevant inputs change; release-only version bumps skip those optional jobs. CI does not repeat the full matrix on merge. Run performance comparisons locally or manually dispatch **Benchmarks** when a change warrants measurement. See [RELEASING.md](./RELEASING.md#ci-scope) for deployment and release behavior.

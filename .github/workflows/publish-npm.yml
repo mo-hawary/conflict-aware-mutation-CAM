@@ -166,7 +166,21 @@ jobs:
           cd "$VERIFY_DIR"
           npm init -y >/dev/null
           npm install --ignore-scripts --save-exact "$PACKAGE_NAME@$PACKAGE_VERSION"
-          npm audit signatures --json --include-attestations > "$RUNNER_TEMP/cam-release/audit.json"
+          # Package metadata may appear before npm serves its attestations.
+          # Retry only a transient not-found response, never an invalid signature.
+          AUDIT_ERROR="$RUNNER_TEMP/cam-release/audit-error.log"
+          for attempt in {1..30}; do
+            if npm audit signatures --json --include-attestations > "$RUNNER_TEMP/cam-release/audit.json" 2>"$AUDIT_ERROR"; then
+              break
+            fi
+            if ! grep -q 'E404' "$AUDIT_ERROR" || (( attempt == 30 )); then
+              cat "$AUDIT_ERROR" >&2
+              cat "$RUNNER_TEMP/cam-release/audit.json" >&2
+              exit 1
+            fi
+            echo "npm attestations are not available yet; retrying in 10 seconds ($attempt/30)."
+            sleep 10
+          done
           node "$SCRIPT" provenance "$RUNNER_TEMP/cam-release" "$GITHUB_WORKSPACE/package.json"
           node --input-type=module <<'NODE'
           import assert from "node:assert/strict"
