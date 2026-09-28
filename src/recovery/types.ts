@@ -2,7 +2,7 @@ import type {
   ErrorSignal,
   JsonValue,
   JsonValueWithUndefinedObjectProperties,
-  MergeResult,
+  MergeConflict,
   PathGroup,
 } from "../types.js"
 
@@ -85,7 +85,7 @@ export type RecoveryOutcome<
   | {
       readonly kind: "conflicts"
       readonly sessionId: string
-      readonly conflicts: Extract<MergeResult, { ok: false }>["conflicts"]
+      readonly conflicts: MergeConflict[]
       readonly currentServerState: S
       readonly latestVersion: V
       readonly handle: RecoverySessionHandle
