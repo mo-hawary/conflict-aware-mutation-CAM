@@ -2,6 +2,13 @@
 
 Release Please maintains the versioned entries below. Source on `main` may be ahead of the latest release. See the [migration guide](./docs/migration.md) for the validation/error changes following 0.1.x and [RELEASING.md](./RELEASING.md) for versioning policy.
 
+## [0.2.1](https://github.com/mo-hawary/conflict-aware-mutation-CAM/compare/v0.2.0...v0.2.1) (2026-09-28)
+
+
+### Bug Fixes
+
+* address merge and React concurrency regressions ([#32](https://github.com/mo-hawary/conflict-aware-mutation-CAM/issues/32)) ([37d4c78](https://github.com/mo-hawary/conflict-aware-mutation-CAM/commit/37d4c78fb041aa4b7d510da94acff6074a35cd2d))
+
 ## [0.2.0](https://github.com/mo-hawary/conflict-aware-mutation-CAM/compare/v0.1.2...v0.2.0) (2026-09-27)
 
 

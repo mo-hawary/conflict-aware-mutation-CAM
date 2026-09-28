@@ -1,7 +1,7 @@
 {
   "name": "conflict-aware-mutation",
   "shortName": "cam",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Resolve stale CRUD writes with safe three-way merges.",
   "author": {
     "name": "Mo Hawary",
