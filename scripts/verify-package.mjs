@@ -160,6 +160,17 @@ assert.deepEqual(
   },
 )
 
+assert.deepEqual(
+  cam.mergeStates({
+    originalState: { name: "A", serverOnly: false },
+    submittedState: { name: "B", serverOnly: false },
+    currentServerState: { name: "A", serverOnly: true },
+    groups: undefined,
+    includeReport: undefined,
+  }),
+  { ok: true, value: { name: "B", serverOnly: true }, conflicts: [] },
+)
+
 const conflict = cam.mergeStates({
   originalState: { status: "pending" },
   submittedState: { status: "cancelled" },
@@ -193,7 +204,7 @@ assert.deepEqual(
 import { CAMConfigError, applyConflictDecisions, formatConflictPath, matchConflictError, mergeStates, resolveConflict } from "conflict-aware-mutation"
 import type { ErrorSignal, JsonValue, MergeResult, PathGroup } from "conflict-aware-mutation"
 import { createRecoveryController } from "conflict-aware-mutation/recovery"
-import type { RecoveryController, RecoveryOutcome } from "conflict-aware-mutation/recovery"
+import type { NormalizedRecoveryControllerOptions, RecoveryController, RecoveryOutcome } from "conflict-aware-mutation/recovery"
 
 const error: ErrorSignal = { code: 409, text: "Order was modified" }
 const match = matchConflictError({ error, expectedError: { code: 409 } })
@@ -207,9 +218,19 @@ const result: MergeResult<typeof submittedState> = mergeStates({
   currentServerState,
 })
 
+const optionalUndefinedResult: MergeResult<typeof submittedState> = mergeStates({
+  originalState,
+  submittedState,
+  currentServerState,
+  groups: undefined,
+  includeReport: undefined,
+})
+
 void CAMConfigError
 void match
 void result
+void optionalUndefinedResult
+void (null as unknown as NormalizedRecoveryControllerOptions<string>)
 void applyConflictDecisions
 void formatConflictPath
 void resolveConflict
