@@ -187,6 +187,13 @@ jobs:
           const pkg = await import(process.env.PACKAGE_NAME)
           assert.deepEqual(
             Object.keys(pkg).sort(),
-            ["CAMConfigError", "matchConflictError", "mergeStates"],
+            [
+              "CAMConfigError",
+              "applyConflictDecisions",
+              "formatConflictPath",
+              "matchConflictError",
+              "mergeStates",
+              "resolveConflict",
+            ],
           )
           NODE
