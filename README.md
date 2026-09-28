@@ -165,7 +165,7 @@ Object properties set to `undefined` remain invalid by default. The explicit `un
 
 ### Coupled paths, reports, and path formatting
 
-For domain values whose fields must be chosen together, pass `groups: [{ id, paths }]` to `mergeStates()`. Grouped calls return a discriminated group conflict with an existence-aware slot for every path; one manual choice selects the whole group. Grouped results have their own `GroupedMergeResult` type.
+For domain values whose fields must be chosen together, pass `groups: [{ id, paths }]` to `mergeStates()`. Grouped calls return a discriminated group conflict with an existence-aware slot for every path; one manual choice selects the whole group. Grouped results have their own `GroupedMergeResult` type. Group paths are validated from the configuration alone. If a member's parent was replaced with `null`, a scalar, or an array, or was deleted on one side while edited on the other, the group couples that whole parent instead, so its slot path is the parent path (see [Coupled paths and reports](./docs/data-model.md#coupled-paths-and-reports)).
 
 Pass `includeReport: true` to include optional change provenance on success and conflict results. Unresolved changes have no result slot, and a conflict still has no persistable partial value. `formatConflictPath()` returns an RFC 6901 JSON Pointer for display, including escaped `/` and `~` keys.
 

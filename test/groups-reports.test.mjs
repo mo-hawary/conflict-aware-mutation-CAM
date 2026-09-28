@@ -379,11 +379,13 @@ test("group paths beneath scalar, null, or array parents merge the parent atomic
   })
   assert.equal(replaced.ok, false)
   assert.equal("value" in replaced, false)
-  assert.deepEqual(replaced.conflicts[0], {
-    path: ["a"],
-    submitted: { exists: true, value: { x: 2 } },
-    currentServer: { exists: true, value: null },
-  })
+  assert.deepEqual(replaced.conflicts, [{
+    kind: "group",
+    groupId: "g",
+    paths: [["a"]],
+    submitted: [{ path: ["a"], value: { exists: true, value: { x: 2 } } }],
+    currentServer: [{ path: ["a"], value: { exists: true, value: null } }],
+  }])
 
   assert.deepEqual(
     mergeStates({
@@ -408,9 +410,11 @@ test("group parents deleted on one side and edited on the other conflict at the 
     ok: false,
     kind: "conflict",
     conflicts: [{
-      path: ["a"],
-      submitted: { exists: true, value: { x: 1, y: 5 } },
-      currentServer: { exists: false },
+      kind: "group",
+      groupId: "g",
+      paths: [["a"]],
+      submitted: [{ path: ["a"], value: { exists: true, value: { x: 1, y: 5 } } }],
+      currentServer: [{ path: ["a"], value: { exists: false } }],
     }],
   })
 
@@ -421,7 +425,18 @@ test("group parents deleted on one side and edited on the other conflict at the 
     groups: [{ id: "g", paths: [["a", "x"]] }],
   })
   assert.equal(mirrored.ok, false)
-  assert.deepEqual(mirrored.conflicts.map((conflict) => conflict.path), [["a"]])
+  assert.deepEqual(mirrored.conflicts.map((conflict) => conflict.paths), [[["a"]]])
+
+  // Regression: a changed member under an edit/delete parent used to add a
+  // second, separate parent conflict that could be answered inconsistently.
+  const single = mergeStates({
+    originalState: { a: { x: 1 } },
+    submittedState: { a: { x: 2 } },
+    currentServerState: {},
+    groups: [{ id: "g", paths: [["a", "x"]] }],
+  })
+  assert.equal(single.conflicts.length, 1)
+  assert.deepEqual(single.conflicts[0].paths, [["a"]])
 
   // One-sided deletion of an unchanged parent still merges.
   assert.deepEqual(
@@ -433,6 +448,39 @@ test("group parents deleted on one side and edited on the other conflict at the 
     }),
     { ok: true, value: { b: 2 }, conflicts: [] },
   )
+})
+
+test("a group keeps members coupled when one member's parent merges atomically", () => {
+  const inputs = {
+    originalState: { price: { currency: "USD" }, totals: { amount: 10 } },
+    submittedState: { price: { currency: "EUR" }, totals: { amount: 20 } },
+    currentServerState: { price: null, totals: { amount: 10 } },
+    groups: [{ id: "money", paths: [["price", "currency"], ["totals", "amount"]] }],
+  }
+  const result = mergeStates(inputs)
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.conflicts.map((conflict) => conflict.paths), [[["price"], ["totals", "amount"]]])
+
+  for (const [choice, expected] of [
+    ["submitted", inputs.submittedState],
+    ["currentServer", inputs.currentServerState],
+  ]) {
+    const resolved = applyConflictDecisions({
+      ...inputs,
+      sessionId: "money",
+      decisions: [{ sessionId: "money", conflict: result.conflicts[0], choice }],
+    })
+    assert.deepEqual(resolved, { ok: true, value: expected, conflicts: [] })
+  }
+
+  // Two groups collapsing onto the same atomic parent: the first group owns it.
+  const shared = mergeStates({
+    originalState: { a: { x: 1, y: 1 } },
+    submittedState: { a: { x: 2, y: 2 } },
+    currentServerState: { a: null },
+    groups: [{ id: "g1", paths: [["a", "x"]] }, { id: "g2", paths: [["a", "y"]] }],
+  })
+  assert.deepEqual(shared.conflicts.map((conflict) => conflict.groupId), ["g1"])
 })
 
 test("group validation rejects accessors without invoking them", () => {

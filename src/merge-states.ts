@@ -407,11 +407,51 @@ function choicesByKey(decisions: readonly Decision[]): Map<string, ConflictChoic
   return new Map(decisions.map(({ conflict, choice }) => [conflictKey(conflict), choice]))
 }
 
+// A member beneath an ancestor that must merge atomically (see
+// isSplittableGroupParent) cannot be selected on its own. The group then
+// couples that whole ancestor instead, so one choice decides every member and
+// the parent never raises a second, separate conflict. An ancestor already
+// claimed by an earlier group stays with that group.
+function effectiveGroup(
+  group: NormalizedPathGroup,
+  snapshots: MergeStateSnapshots,
+  claimed: Set<string>,
+): NormalizedPathGroup | undefined {
+  const byKey = new Map<string, PathSegment[]>()
+  for (const path of group.paths) {
+    let effective = path
+    for (let length = 0; length < path.length; length += 1) {
+      const prefix = path.slice(0, length)
+      if (!isSplittableGroupParent(
+        slotAtPath(snapshots.originalState, prefix),
+        slotAtPath(snapshots.submittedState, prefix),
+        slotAtPath(snapshots.currentServerState, prefix),
+      )) {
+        effective = prefix
+        break
+      }
+    }
+    const key = encodePath(effective)
+    if (effective !== path && claimed.has(key)) continue
+    byKey.set(key, effective)
+  }
+  for (const key of byKey.keys()) claimed.add(key)
+  if (byKey.size === 0) return undefined
+  const paths = Array.from(byKey.values()).sort(comparePath)
+  return { id: group.id, paths, pathKeys: paths.map((path) => path.map(String)) }
+}
+
 function groupEvaluations(
   snapshots: MergeStateSnapshots,
   decisions: ReadonlyMap<string, ConflictChoice>,
 ): GroupEvaluation[] {
-  return snapshots.groups.map((group): GroupEvaluation => {
+  const claimed = new Set<string>()
+  const groups: NormalizedPathGroup[] = []
+  for (const configured of snapshots.groups) {
+    const group = effectiveGroup(configured, snapshots, claimed)
+    if (group !== undefined) groups.push(group)
+  }
+  return groups.map((group): GroupEvaluation => {
     const original = group.paths.map((path) => slotAtPath(snapshots.originalState, path))
     const submitted = group.paths.map((path) => slotAtPath(snapshots.submittedState, path))
     const currentServer = group.paths.map((path) => slotAtPath(snapshots.currentServerState, path))
@@ -433,7 +473,7 @@ function groupEvaluations(
     }
 
     const conflict = makeGroupConflict(group, submitted, currentServer)
-    const choice = decisions.get(conflictKey(conflict))
+    const choice = decisions.size > 0 ? decisions.get(conflictKey(conflict)) : undefined
     if (choice === "submitted") {
       return { group, original, submitted, currentServer, result: submitted, provenance: "chosen-submitted" }
     }
@@ -505,8 +545,11 @@ function mergeSlot(
   forcedGroupSlots: ReadonlyMap<string, Slot>,
   changedGroupPrefixes: ReadonlySet<string>,
 ): Slot {
-  const encodedPath = encodePath(path)
-  if (forcedGroupSlots.has(encodedPath)) return forcedGroupSlots.get(encodedPath)!
+  // Ungrouped merges skip path encoding entirely.
+  const encodedPath = forcedGroupSlots.size > 0 ? encodePath(path) : undefined
+  if (encodedPath !== undefined && forcedGroupSlots.has(encodedPath)) {
+    return forcedGroupSlots.get(encodedPath)!
+  }
 
   // When all three sides are objects, recursing directly is equivalent to the
   // whole-value checks below and avoids comparing each subtree twice.
@@ -536,6 +579,7 @@ function mergeSlot(
   // and splitting cannot hide a parent-level collision; otherwise the
   // ordinary atomic add/delete behavior remains in force.
   if (
+    encodedPath !== undefined &&
     changedGroupPrefixes.has(encodedPath) &&
     isSplittableGroupParent(original, submitted, currentServer)
   ) {
@@ -604,7 +648,7 @@ function mergeSlot(
     submitted: toConflictValue(submitted),
     currentServer: toConflictValue(currentServer),
   }
-  const choice = decisions.get(conflictKey(conflict))
+  const choice = decisions.size > 0 ? decisions.get(conflictKey(conflict)) : undefined
   if (choice === "submitted") {
     changes?.push(pathChange(path, original, submitted, currentServer, submitted, "chosen-submitted"))
     return submitted
