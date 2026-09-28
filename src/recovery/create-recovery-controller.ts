@@ -6,7 +6,11 @@ import { snapshotJsonValue } from "../validation.js"
 import type {
   CandidateValidation,
   DraftRevision,
+  NormalizedRecoverInput,
+  NormalizedRecoveryController,
+  NormalizedRecoveryControllerOptions,
   RecoverInput,
+  RecoveryControllerInternalOptions,
   RecoveryControllerOptions,
   RecoveryController,
   RecoveryEntityId,
@@ -82,8 +86,24 @@ export function createRecoveryController<
   E extends RecoveryEntityId = RecoveryEntityId,
   L extends { readonly state: S } = { readonly state: S },
 >(
-  options: RecoveryControllerOptions<S, V, T, E, L>,
-): RecoveryController<S, V, T, E> {
+  options: RecoveryControllerInternalOptions<S, V, T, E, L>,
+): RecoveryController<S, V, T, E>
+export function createRecoveryController<
+  V extends RecoveryVersion,
+  E extends RecoveryEntityId = RecoveryEntityId,
+  L extends { readonly state: JsonValue } = { readonly state: JsonValue },
+>(
+  options: NormalizedRecoveryControllerOptions<V, E, L>,
+): NormalizedRecoveryController<V, E>
+export function createRecoveryController<
+  S extends JsonValue,
+  V extends RecoveryVersion,
+  T extends JsonValue = JsonValue,
+  E extends RecoveryEntityId = RecoveryEntityId,
+  L extends { readonly state: S } = { readonly state: S },
+>(
+  options: RecoveryControllerInternalOptions<S, V, T, E, L>,
+): RecoveryController<S, V, T, E> | NormalizedRecoveryController<V, E> {
   const config = validateOptions(options)
 
   // Capture the policy functions so mutating the caller's options object later
@@ -379,7 +399,7 @@ export function createRecoveryController<
   }
 
   async function recover(
-    input: RecoverInput<S, T, V, E>,
+    input: RecoverInput<S, T, V, E> | NormalizedRecoverInput<V, E>,
   ): Promise<RecoveryOutcome<T, S, V, E>> {
     if (cancelled) return { kind: "cancelled" }
     if (busy) return { kind: "busy" }
@@ -666,7 +686,9 @@ export function createRecoveryController<
     invalidateActive()
   }
 
-  return { recover, reviseCandidate, confirm, cancel }
+  return { recover, reviseCandidate, confirm, cancel } as
+    | RecoveryController<S, V, T, E>
+    | NormalizedRecoveryController<V, E>
 }
 
 function validateOptions<
@@ -675,7 +697,7 @@ function validateOptions<
   T extends JsonValue,
   E extends RecoveryEntityId,
   L extends { readonly state: S },
->(options: RecoveryControllerOptions<S, V, T, E, L>): RecoveryControllerOptions<S, V, T, E, L> {
+>(options: RecoveryControllerInternalOptions<S, V, T, E, L>): RecoveryControllerInternalOptions<S, V, T, E, L> {
   if (typeof options !== "object" || options === null || Array.isArray(options)) {
     throw new CAMConfigError("createRecoveryController options must be an object")
   }
@@ -690,20 +712,20 @@ function validateOptions<
     ? undefined
     : deepFreeze(snapshotJsonValue(rawGroups, "groups")) as unknown as readonly PathGroup[]
   const config = {
-    expectedError: readOwnData<RecoveryControllerOptions<S, V, T, E, L>["expectedError"]>(options, "expectedError", "expectedError"),
-    errorSignalFrom: readOwnData<RecoveryControllerOptions<S, V, T, E, L>["errorSignalFrom"]>(options, "errorSignalFrom", "errorSignalFrom"),
-    fetchLatest: readOwnData<RecoveryControllerOptions<S, V, T, E, L>["fetchLatest"]>(options, "fetchLatest", "fetchLatest"),
-    getVersion: readOwnData<RecoveryControllerOptions<S, V, T, E, L>["getVersion"]>(options, "getVersion", "getVersion"),
-    isTerminal: readOwnData<RecoveryControllerOptions<S, V, T, E, L>["isTerminal"]>(options, "isTerminal", "isTerminal"),
-    project: readOwnData<RecoveryControllerOptions<S, V, T, E, L>["project"]>(options, "project", "project"),
-    prepareCandidate: readOwnData<RecoveryControllerOptions<S, V, T, E, L>["prepareCandidate"]>(options, "prepareCandidate", "prepareCandidate"),
-    validateCandidate: readOwnData<RecoveryControllerOptions<S, V, T, E, L>["validateCandidate"]>(options, "validateCandidate", "validateCandidate"),
-    mutate: readOwnData<RecoveryControllerOptions<S, V, T, E, L>["mutate"]>(options, "mutate", "mutate"),
-    isCurrent: readOwnData<RecoveryControllerOptions<S, V, T, E, L>["isCurrent"]>(options, "isCurrent", "isCurrent"),
+    expectedError: readOwnData<RecoveryControllerInternalOptions<S, V, T, E, L>["expectedError"]>(options, "expectedError", "expectedError"),
+    errorSignalFrom: readOwnData<RecoveryControllerInternalOptions<S, V, T, E, L>["errorSignalFrom"]>(options, "errorSignalFrom", "errorSignalFrom"),
+    fetchLatest: readOwnData<RecoveryControllerInternalOptions<S, V, T, E, L>["fetchLatest"]>(options, "fetchLatest", "fetchLatest"),
+    getVersion: readOwnData<RecoveryControllerInternalOptions<S, V, T, E, L>["getVersion"]>(options, "getVersion", "getVersion"),
+    isTerminal: readOwnData<RecoveryControllerInternalOptions<S, V, T, E, L>["isTerminal"]>(options, "isTerminal", "isTerminal"),
+    project: readOwnData<RecoveryControllerInternalOptions<S, V, T, E, L>["project"]>(options, "project", "project"),
+    prepareCandidate: readOwnData<RecoveryControllerInternalOptions<S, V, T, E, L>["prepareCandidate"]>(options, "prepareCandidate", "prepareCandidate"),
+    validateCandidate: readOwnData<RecoveryControllerInternalOptions<S, V, T, E, L>["validateCandidate"]>(options, "validateCandidate", "validateCandidate"),
+    mutate: readOwnData<RecoveryControllerInternalOptions<S, V, T, E, L>["mutate"]>(options, "mutate", "mutate"),
+    isCurrent: readOwnData<RecoveryControllerInternalOptions<S, V, T, E, L>["isCurrent"]>(options, "isCurrent", "isCurrent"),
     ...(autoRetry === undefined ? {} : { autoRetry }),
     ...(groups === undefined ? {} : { groups }),
     ...(undefinedObjectProperties === undefined ? {} : { undefinedObjectProperties }),
-  } as RecoveryControllerOptions<S, V, T, E, L>
+  } as RecoveryControllerInternalOptions<S, V, T, E, L>
   const functionNames = [
     "errorSignalFrom",
     "fetchLatest",
@@ -800,7 +822,7 @@ function readRecoverInput<
   V extends RecoveryVersion,
   E extends RecoveryEntityId,
 >(
-  input: RecoverInput<S, T, V, E>,
+  input: RecoverInput<S, T, V, E> | NormalizedRecoverInput<V, E>,
   undefinedObjectProperties?: "omit",
 ): Omit<RecoverInput<S, T, V, E>, "originalState" | "submittedState"> & {
   readonly originalState: S
