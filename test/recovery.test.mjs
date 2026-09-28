@@ -954,8 +954,136 @@ test("autoRetry returns changed-again after its single retry also goes stale", a
   assert.equal(outcome.kind, "changed-again")
   if (outcome.kind === "changed-again") {
     assert.deepEqual(outcome.candidate, { title: "local", serverOnly: true })
+    assert.deepEqual(outcome.currentServerState, {
+      title: "original",
+      serverOnly: true,
+    })
+
+    const nextOptions = makeOptions()
+    nextOptions.setLatest({
+      state: { title: "original", serverOnly: false },
+      etag: '"latest-3"',
+    })
+    const nextController = createRecoveryController(nextOptions)
+    const continued = await nextController.recover(input({
+      expectedVersion: outcome.latestVersion,
+      originalState: outcome.currentServerState,
+      submittedState: outcome.candidate,
+    }))
+    assert.equal(continued.kind, "review-ready")
+    if (continued.kind === "review-ready") {
+      assert.deepEqual(continued.candidate, {
+        title: "local",
+        serverOnly: false,
+      })
+    }
   }
   assert.equal(options.events.filter(([name]) => name === "mutate").length, 2)
+})
+
+test("recovery merge honors configured coupled path groups", async () => {
+  const options = makeOptions({
+    groups: [{
+      id: "variant-media",
+      paths: [["defaultVariantId"], ["coverMediaId"]],
+    }],
+  })
+  options.setLatest({
+    state: { defaultVariantId: "a", coverMediaId: "server-media" },
+    etag: '"latest-2"',
+  })
+  const controller = createRecoveryController(options)
+
+  const outcome = await controller.recover(input({
+    originalState: { defaultVariantId: "a", coverMediaId: "original-media" },
+    submittedState: { defaultVariantId: "b", coverMediaId: "original-media" },
+  }))
+
+  assert.equal(outcome.kind, "conflicts")
+  if (outcome.kind === "conflicts") {
+    assert.equal(outcome.conflicts.length, 1)
+    assert.equal(outcome.conflicts[0].kind, "group")
+    assert.equal(outcome.conflicts[0].groupId, "variant-media")
+  }
+})
+
+test("recovery controller can omit parser-style undefined object properties", async () => {
+  const strictOptions = makeOptions()
+  const strictController = createRecoveryController(strictOptions)
+  await assert.rejects(
+    strictController.recover(input({
+      originalState: { title: "original", caption: undefined },
+      submittedState: { title: "local", caption: undefined },
+    })),
+    CAMConfigError,
+  )
+  assert.equal(strictOptions.events.some(([name]) => name === "mutate"), false)
+
+  const options = makeOptions({
+    undefinedObjectProperties: "omit",
+    mutate: async (candidate, write) => {
+      options.events.push(["mutate", candidate, write])
+      return { state: candidate, version: '"saved-2"' }
+    },
+  })
+  const controller = createRecoveryController(options)
+  const outcome = await controller.recover(input({
+    originalState: { title: "original", caption: undefined },
+    submittedState: { title: "local", caption: undefined },
+  }))
+
+  assert.equal(outcome.kind, "saved")
+  const mutation = options.events.find(([name]) => name === "mutate")
+  assert.deepEqual(mutation[1], { title: "local" })
+  assert.equal(Object.hasOwn(mutation[1], "caption"), false)
+})
+
+test("an accepted mutation is not masked by later navigation or cancellation", async (t) => {
+  await t.test("draft becomes obsolete while the request is in flight", async () => {
+    let releaseMutation
+    const gate = new Promise((resolve) => {
+      releaseMutation = resolve
+    })
+    const options = makeOptions({
+      mutate: async (candidate, write) => {
+        options.events.push(["mutate", candidate, write])
+        await gate
+        return { state: candidate, version: '"saved-2"' }
+      },
+    })
+    const controller = createRecoveryController(options)
+    const pending = controller.recover(input())
+
+    await delay(0)
+    options.setRevision(1)
+    releaseMutation()
+
+    const outcome = await pending
+    assert.equal(outcome.kind, "saved")
+  })
+
+  await t.test("controller is cancelled while the request is in flight", async () => {
+    let releaseMutation
+    const gate = new Promise((resolve) => {
+      releaseMutation = resolve
+    })
+    const options = makeOptions({
+      mutate: async (candidate, write) => {
+        options.events.push(["mutate", candidate, write])
+        await gate
+        return { state: candidate, version: '"saved-2"' }
+      },
+    })
+    const controller = createRecoveryController(options)
+    const pending = controller.recover(input())
+
+    await delay(0)
+    controller.cancel()
+    releaseMutation()
+
+    const outcome = await pending
+    assert.equal(outcome.kind, "saved")
+  })
 })
 
 test("cancelled and replaced sessions invalidate outstanding capabilities", async () => {
