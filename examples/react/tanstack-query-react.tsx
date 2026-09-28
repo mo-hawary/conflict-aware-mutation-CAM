@@ -65,11 +65,16 @@ export function useSaveOrder(id: string, api: OrderApi, callbacks: OrderRecovery
           throw new ConflictNeedsDecision([], inputs, latest.etag, revision, `${revision}:terminal`, latest.state, true)
         }
         const merged = mergeStates<Order>({ ...inputs, includeReport: true })
-        const candidate = merged.ok ? merged.value : inputs.submittedState
-        const prepared = callbacks.prepareCandidate ? callbacks.prepareCandidate(candidate) : candidate
+        if (!merged.ok) {
+          // Unresolved conflicts come first. The candidate chosen through the
+          // picker is validated in onCandidate before Confirm is enabled.
+          const prepared = callbacks.prepareCandidate ? callbacks.prepareCandidate(inputs.submittedState) : inputs.submittedState
+          throw new ConflictNeedsDecision(merged.conflicts, inputs, latest.etag, revision, `${revision}:${latest.etag}`, prepared, false, null, merged.report.changes)
+        }
+        const prepared = callbacks.prepareCandidate ? callbacks.prepareCandidate(merged.value) : merged.value
         const validation = callbacks.validateCandidate?.(prepared)
         if (typeof validation === "string") throw new ConflictNeedsDecision([], inputs, latest.etag, revision, `${revision}:validation`, prepared, false, validation, merged.report.changes)
-        throw new ConflictNeedsDecision(merged.ok ? [] : merged.conflicts, inputs, latest.etag, revision, `${revision}:${latest.etag}`, prepared, false, null, merged.report.changes)
+        throw new ConflictNeedsDecision([], inputs, latest.etag, revision, `${revision}:${latest.etag}`, prepared, false, null, merged.report.changes)
       }
     },
     onSuccess: async (saved) => {

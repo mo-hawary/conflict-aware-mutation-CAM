@@ -200,25 +200,20 @@ function sameSlotLists(left: readonly Slot[], right: readonly Slot[]): boolean {
   return left.length === right.length && left.every((slot, index) => slotEqual(slot, right[index]!))
 }
 
-function slotAtPath(root: JsonValue, path: readonly PathSegment[], label: string): Slot {
+// A group member beneath a scalar, array, or null ancestor is unaddressable on
+// that side, so it reads as absent. The ancestor itself is merged atomically
+// (see isSplittableGroupParent), which keeps shape changes in the data a
+// conflict instead of a configuration error.
+function slotAtPath(root: JsonValue, path: readonly PathSegment[]): Slot {
   let slot: Slot = root
   for (let index = 0; index < path.length; index += 1) {
-    if (slot === ABSENT) return ABSENT
-    if (Array.isArray(slot)) {
-      throw new CAMConfigError(`${label} must not descend into an array`)
-    }
-    if (!isPlainObject(slot)) {
-      throw new CAMConfigError(`${label} must pass through plain objects`)
-    }
+    if (!isPlainObject(slot)) return ABSENT
     slot = childSlot(slot, String(path[index]))
   }
   return slot
 }
 
-function validateGroupPaths(
-  rawGroups: unknown,
-  snapshots: Pick<MergeStateSnapshots, "originalState" | "submittedState" | "currentServerState">,
-): NormalizedPathGroup[] {
+function validateGroupPaths(rawGroups: unknown): NormalizedPathGroup[] {
   const value = snapshotJsonValue(rawGroups, "groups")
   if (!Array.isArray(value)) throw new CAMConfigError("groups must be an array")
 
@@ -269,28 +264,6 @@ function validateGroupPaths(
         if (isPrefix) {
           throw new CAMConfigError(
             `path groups must not contain duplicate, overlapping, or ancestor paths (${JSON.stringify(path)} and ${JSON.stringify(existing.path)})`,
-          )
-        }
-      }
-      for (const root of [
-        snapshots.originalState,
-        snapshots.submittedState,
-        snapshots.currentServerState,
-      ]) {
-        const parentPath = path.slice(0, -1)
-        let parent: Slot = root
-        for (const segment of parentPath) {
-          if (parent === ABSENT) continue
-          if (!isPlainObject(parent)) {
-            throw new CAMConfigError(
-              `groups[${groupIndex}] path ${JSON.stringify(path)} must not descend through a scalar or array`,
-            )
-          }
-          parent = childSlot(parent, String(segment))
-        }
-        if (parent !== ABSENT && !isPlainObject(parent)) {
-          throw new CAMConfigError(
-            `groups[${groupIndex}] path ${JSON.stringify(path)} must not descend through a scalar or array`,
           )
         }
       }
@@ -372,7 +345,7 @@ export function snapshotMergeStates(
   const groupsDescriptor = Object.getOwnPropertyDescriptor(record, "groups")
   const groupsValue = requiredOwnValue(record, "groups")
   const grouped = groupsDescriptor !== undefined
-  const groups = grouped ? validateGroupPaths(groupsValue, snapshots) : []
+  const groups = grouped ? validateGroupPaths(groupsValue) : []
 
   return { ...snapshots, groups, grouped, includeReport: includeReportValue === true }
 }
@@ -439,9 +412,9 @@ function groupEvaluations(
   decisions: ReadonlyMap<string, ConflictChoice>,
 ): GroupEvaluation[] {
   return snapshots.groups.map((group): GroupEvaluation => {
-    const original = group.paths.map((path) => slotAtPath(snapshots.originalState, path, "group path"))
-    const submitted = group.paths.map((path) => slotAtPath(snapshots.submittedState, path, "group path"))
-    const currentServer = group.paths.map((path) => slotAtPath(snapshots.currentServerState, path, "group path"))
+    const original = group.paths.map((path) => slotAtPath(snapshots.originalState, path))
+    const submitted = group.paths.map((path) => slotAtPath(snapshots.submittedState, path))
+    const currentServer = group.paths.map((path) => slotAtPath(snapshots.currentServerState, path))
     const submittedOriginal = sameSlotLists(submitted, original)
     const currentOriginal = sameSlotLists(currentServer, original)
     const submittedCurrent = sameSlotLists(submitted, currentServer)
@@ -506,6 +479,21 @@ function groupChange(evaluation: GroupEvaluation): GroupChangeReportEntry {
   return entry
 }
 
+// Splitting a group parent key by key is safe only when every side holds a
+// plain object or is absent, and the parent was not deleted on one side while
+// edited on the other. An edit/delete collision must stay a conflict at the
+// parent path: splitting it would rebuild an object neither side had.
+function isSplittableGroupParent(original: Slot, submitted: Slot, currentServer: Slot): boolean {
+  const sides: Slot[] = [original, submitted, currentServer]
+  for (const value of sides) {
+    if (value !== ABSENT && !isPlainObject(value)) return false
+  }
+  if (original === ABSENT) return true
+  if (submitted === ABSENT) return currentServer === ABSENT || slotEqual(currentServer, original)
+  if (currentServer === ABSENT) return slotEqual(submitted, original)
+  return true
+}
+
 function mergeSlot(
   original: Slot,
   submitted: Slot,
@@ -544,19 +532,16 @@ function mergeSlot(
   }
 
   // A configured group can point beneath a parent object that was added or
-  // removed on one side. Split that parent only when a group member changed;
-  // otherwise the ordinary atomic add/delete behavior remains in force.
-  if (changedGroupPrefixes.has(encodedPath)) {
+  // removed on one side. Split that parent only when a group member changed
+  // and splitting cannot hide a parent-level collision; otherwise the
+  // ordinary atomic add/delete behavior remains in force.
+  if (
+    changedGroupPrefixes.has(encodedPath) &&
+    isSplittableGroupParent(original, submitted, currentServer)
+  ) {
     const originalObject = isPlainObject(original) ? original : {}
     const submittedObject = isPlainObject(submitted) ? submitted : {}
     const currentServerObject = isPlainObject(currentServer) ? currentServer : {}
-
-    const parentSlots: Slot[] = [original, submitted, currentServer]
-    for (const value of parentSlots) {
-      if (value !== ABSENT && !isPlainObject(value)) {
-        throw new CAMConfigError("group paths must not descend through a scalar or array")
-      }
-    }
 
     if (original === ABSENT && submitted === ABSENT && currentServer === ABSENT) {
       return ABSENT

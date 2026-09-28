@@ -126,7 +126,7 @@ These merge results are structural only. Your application still owns server-side
 
 ### Coupled paths and reports
 
-When fields must be selected together, configure a group with path-segment arrays. A conflict then contains all group slots and one submitted/current-server choice applies to the entire group. Paths must be non-root, non-overlapping, and must not descend through arrays or scalar parents. Missing object ancestors are supported. Independent fields outside a group still merge normally.
+When fields must be selected together, configure a group with path-segment arrays. A conflict then contains all group slots and one submitted/current-server choice applies to the entire group. Paths must be non-root and non-overlapping; that is checked from the configuration alone, never from the state data. Missing object ancestors are supported. When a group member's ancestor is an array, a scalar, or `null` on any side, the member is treated as absent on that side and the ancestor merges atomically, so a server that replaces `address` with `null` produces a conflict at `address`, not an error. An ancestor object that one side deleted while the other side edited it is also a conflict at the ancestor path; CAM never splits it into a partial object neither side had. Independent fields outside a group still merge normally.
 
 `includeReport: true` adds opt-in provenance for changed paths and groups. Unresolved report entries omit `result`, and the conflict result still has no partial value. `formatConflictPath()` formats path segments as RFC 6901 JSON Pointer for display; it escapes `/` and `~` so keys with punctuation remain unambiguous.
 

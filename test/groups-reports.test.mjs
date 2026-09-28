@@ -324,7 +324,7 @@ test("manual path decisions add chosen provenance without exposing partial value
   assert.equal(clonedReport.value.profile.phone, "222")
 })
 
-test("validates group IDs, path uniqueness, overlap, root paths, parents, and array descent", () => {
+test("validates group IDs, path uniqueness, overlap, and root paths", () => {
   const base = {
     originalState: { item: { child: 1, sibling: 2 }, rows: [{ id: 1 }] },
     submittedState: { item: { child: 1, sibling: 2 }, rows: [{ id: 1 }] },
@@ -338,25 +338,100 @@ test("validates group IDs, path uniqueness, overlap, root paths, parents, and ar
     [{ id: "g", paths: [["item"], ["item", "child"]] }],
     [{ id: "g", paths: [["item", "child"]] }, { id: "g", paths: [["item", "sibling"]] }],
     [{ id: "g1", paths: [["item", "child"]] }, { id: "g2", paths: [["item"]] }],
-    [{ id: "g", paths: [["rows", 0, "id"]] }],
   ]
   for (const groups of badGroups) {
     assert.throws(() => mergeStates({ ...base, groups }), CAMConfigError)
   }
 
   assert.throws(
-    () => mergeStates({
+    () => mergeStates({ ...base, groups: [{ id: "g", paths: [["item", "child"]] }], includeReport: false }),
+    CAMConfigError,
+  )
+})
+
+test("group paths beneath scalar, null, or array parents merge the parent atomically", () => {
+  const rows = { rows: [{ id: 1 }] }
+  assert.deepEqual(
+    mergeStates({
+      originalState: rows,
+      submittedState: rows,
+      currentServerState: rows,
+      groups: [{ id: "g", paths: [["rows", 0, "id"]] }],
+    }),
+    { ok: true, value: rows, conflicts: [] },
+  )
+  assert.deepEqual(
+    mergeStates({
       originalState: { item: 1 },
       submittedState: { item: 1 },
       currentServerState: { item: 1 },
       groups: [{ id: "g", paths: [["item", "child"]] }],
     }),
-    CAMConfigError,
+    { ok: true, value: { item: 1 }, conflicts: [] },
   )
 
-  assert.throws(
-    () => mergeStates({ ...base, groups: [{ id: "g", paths: [["item", "child"]] }], includeReport: false }),
-    CAMConfigError,
+  // Regression: a server-side shape change is data, not a config error.
+  const replaced = mergeStates({
+    originalState: { a: { x: 1 } },
+    submittedState: { a: { x: 2 } },
+    currentServerState: { a: null },
+    groups: [{ id: "g", paths: [["a", "x"]] }],
+  })
+  assert.equal(replaced.ok, false)
+  assert.equal("value" in replaced, false)
+  assert.deepEqual(replaced.conflicts[0], {
+    path: ["a"],
+    submitted: { exists: true, value: { x: 2 } },
+    currentServer: { exists: true, value: null },
+  })
+
+  assert.deepEqual(
+    mergeStates({
+      originalState: { a: { x: 1 } },
+      submittedState: { a: { x: 1 } },
+      currentServerState: { a: null },
+      groups: [{ id: "g", paths: [["a", "x"]] }],
+    }),
+    { ok: true, value: { a: null }, conflicts: [] },
+  )
+})
+
+test("group parents deleted on one side and edited on the other conflict at the parent", () => {
+  // Regression: splitting this parent rebuilt { a: { y: 5 } }, which neither side had.
+  const result = mergeStates({
+    originalState: { a: { x: 1 } },
+    submittedState: { a: { x: 1, y: 5 } },
+    currentServerState: {},
+    groups: [{ id: "g", paths: [["a", "x"]] }],
+  })
+  assert.deepEqual(result, {
+    ok: false,
+    kind: "conflict",
+    conflicts: [{
+      path: ["a"],
+      submitted: { exists: true, value: { x: 1, y: 5 } },
+      currentServer: { exists: false },
+    }],
+  })
+
+  const mirrored = mergeStates({
+    originalState: { a: { x: 1 } },
+    submittedState: {},
+    currentServerState: { a: { x: 1, y: 5 } },
+    groups: [{ id: "g", paths: [["a", "x"]] }],
+  })
+  assert.equal(mirrored.ok, false)
+  assert.deepEqual(mirrored.conflicts.map((conflict) => conflict.path), [["a"]])
+
+  // One-sided deletion of an unchanged parent still merges.
+  assert.deepEqual(
+    mergeStates({
+      originalState: { a: { x: 1 }, b: 1 },
+      submittedState: { b: 2 },
+      currentServerState: { a: { x: 1 }, b: 1 },
+      groups: [{ id: "g", paths: [["a", "x"]] }],
+    }),
+    { ok: true, value: { b: 2 }, conflicts: [] },
   )
 })
 

@@ -188,6 +188,38 @@ test("invalid review candidates stay visible and require repair before confirmat
   assert.equal(puts[1].state.notes, "fixed")
 })
 
+test("a conflict stays visible when the fallback candidate fails validation", async () => {
+  // Regression: validating the unresolved fallback (submittedState) used to
+  // drop the conflicts, so fixing the field allowed Confirm without a choice.
+  const fetchQueue = [
+    loaded(order({ notes: "before" }), "e1"),
+    loaded(order({ notes: "server" }), "e2"),
+  ]
+  const puts = []
+  const api = {
+    fetchOrder: async () => fetchQueue.shift(),
+    putOrder: async (_id, state, etag) => {
+      puts.push({ state: structuredClone(state), etag })
+      if (puts.length === 1) throw staleWrite()
+      return loaded(structuredClone(state), "e3")
+    },
+  }
+  const recovery = {
+    validateCandidate: (candidate) => candidate.notes === "invalid" ? "Notes need correction" : undefined,
+  }
+  const entry = await mountEditor("one", api, recovery)
+  changeNotes(entry, "invalid")
+  await submit(entry)
+  await waitFor(() => assert.equal(radioInputs(entry).length, 2))
+  assert.equal(button(entry, "Confirm").disabled, true)
+
+  changeNotes(entry, "fixed")
+  await waitFor(() => assert.equal(notesInput(entry).value, "fixed"))
+  assert.equal(radioInputs(entry).length, 2, "the conflict still needs an explicit choice")
+  assert.equal(button(entry, "Confirm").disabled, true)
+  assert.equal(puts.length, 1)
+})
+
 test("terminal latest state blocks choices and confirmation", async () => {
   const fetchQueue = [
     loaded(order(), "e1"),
