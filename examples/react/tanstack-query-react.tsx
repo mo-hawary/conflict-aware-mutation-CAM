@@ -216,7 +216,7 @@ function Editor({ id, api, original, recovery = {} }: { id: string; api: OrderAp
       {pending && (
         <ConflictPicker
           pending={pending}
-          pendingSave={save.isPending}
+          pendingSave={resolving}
           error={saveError}
           candidate={draft}
           currentRevision={revisionRef.current}
