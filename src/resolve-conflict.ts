@@ -19,13 +19,8 @@ import type {
   ResolveConflictInput,
   ResolveConflictReportedResult,
   ResolveConflictResult,
+  ResolveRuntimeResult,
 } from "./types.js"
-
-type ResolveRuntimeResult<T extends JsonValue> =
-  | ResolveConflictResult<T>
-  | ResolveConflictGroupedResult<T>
-  | ResolveConflictReportedResult<T>
-  | ResolveConflictGroupedReportedResult<T>
 
 /**
  * Matches a backend error first, then composes the three-way merge only when
