@@ -34,7 +34,7 @@ The React example exports `OrderEditor` and an `OrderApi` interface for your bac
 - **Ordinary save:** typing stays enabled. When the request succeeds, the draft preserves notes typed during the request and adopts the other fields from the saved response.
 - **Stale write:** the editor fetches the latest state, stops for terminal records, and presents a structurally merged candidate for review. Candidates pass through the supplied preparation and validation callbacks.
 - **Conflict choices:** each choice is bound to the displayed session and exact conflict tuple. Applying choices updates the candidate; it does not write it. Invalid candidates remain editable, and only explicit confirmation starts a version-guarded request.
-- **Changed draft:** typing during review edits and revalidates the displayed candidate. A later stale confirmation returns to recovery and requires another review.
+- **Changed draft:** typing during review edits and revalidates the displayed candidate. A later stale confirmation returns to recovery and requires another review. If a recovery write itself loses another version race, keep the returned candidate together with its returned `currentServerState` and `latestVersion`; that pair is the next safe three-way-merge baseline.
 - **Cache update:** immediately before writing a successful response to the cache, the mutation awaits cancellation of the exact `['order', id]` query. This prevents an already-running refetch, including one started during the save, from overwriting that saved response with stale data.
 
 If you add editable fields, extend the draft reconciliation and its behavior tests. Query cancellation protects the client cache; every write still needs the backend's concurrency precondition.
