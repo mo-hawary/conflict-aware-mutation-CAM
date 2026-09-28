@@ -633,8 +633,9 @@ test("draft edits after a conflict invalidate old choices and survive a fresh me
   assert.equal(notesInput(entry).value, "later draft")
   assert.match(entry.container.querySelector("fieldset").textContent, /later draft/)
   assert.match(entry.container.querySelector("fieldset").textContent, /server two/)
-  assert.equal(radioInputs(entry)[0].checked, false, "the new conflict resets to the server choice")
-  assert.equal(radioInputs(entry)[1].checked, true)
+  assert.equal(radioInputs(entry)[0].checked, false, "the new conflict clears old choices")
+  assert.equal(radioInputs(entry)[1].checked, false)
+  assert.equal(button(entry, "Apply choices").disabled, true)
 })
 
 test("a second stale write creates a new conflict and resets the choice set", async () => {
@@ -662,10 +663,12 @@ test("a second stale write creates a new conflict and resets the choice set", as
   await waitForPuts(puts, 2)
 
   assert.equal(radioInputs(entry).length, 2)
-  assert.equal(radioInputs(entry)[0].checked, false, "a new conflict resets to the server choice")
-  assert.equal(radioInputs(entry)[1].checked, true)
+  assert.equal(radioInputs(entry)[0].checked, false, "a new conflict clears the previous choice")
+  assert.equal(radioInputs(entry)[1].checked, false)
+  assert.equal(button(entry, "Apply choices").disabled, true)
   assert.equal(puts[1].etag, "e2")
 
+  fireEvent.click(radioInputs(entry)[0])
   await applyChoices(entry)
   assert.equal(puts.length, 2)
   await confirmReview(entry)
@@ -726,7 +729,9 @@ test("a changed conflict path cannot inherit the previous path's choice", async 
   view.rerender(React.createElement(ConflictPicker, props(secondConflict, secondInputs)))
 
   assert.equal(radioInputs(view)[0].checked, false)
-  assert.equal(radioInputs(view)[1].checked, true)
+  assert.equal(radioInputs(view)[1].checked, false)
+  assert.equal(button(view, "Apply choices").disabled, true)
+  fireEvent.click(radioInputs(view)[1])
   await applyChoices(view)
   assert.equal(choice.status, "approved", "the old choice must not be transferred to the new path")
 })
