@@ -1,6 +1,6 @@
 import { CAMConfigError } from "../errors.js"
 import { matchConflictError } from "../match-conflict-error.js"
-import { mergeStates } from "../merge-states.js"
+import { mergeStates, snapshotPathGroups } from "../merge-states.js"
 import type { ErrorSignal, JsonValue, PathGroup } from "../types.js"
 import { snapshotJsonValue } from "../validation.js"
 import type {
@@ -86,7 +86,7 @@ export function createRecoveryController<
   E extends RecoveryEntityId = RecoveryEntityId,
   L extends { readonly state: S } = { readonly state: S },
 >(
-  options: RecoveryControllerInternalOptions<S, V, T, E, L>,
+  options: RecoveryControllerOptions<S, V, T, E, L>,
 ): RecoveryController<S, V, T, E>
 export function createRecoveryController<
   V extends RecoveryVersion,
@@ -710,7 +710,9 @@ function validateOptions<
   const rawGroups = readOptionalOwnData<readonly PathGroup[]>(options, "groups", "groups")
   const groups = rawGroups === undefined
     ? undefined
-    : deepFreeze(snapshotJsonValue(rawGroups, "groups")) as unknown as readonly PathGroup[]
+    : deepFreeze(
+        snapshotPathGroups(rawGroups) as unknown as JsonValue,
+      ) as unknown as readonly PathGroup[]
   const config = {
     expectedError: readOwnData<RecoveryControllerInternalOptions<S, V, T, E, L>["expectedError"]>(options, "expectedError", "expectedError"),
     errorSignalFrom: readOwnData<RecoveryControllerInternalOptions<S, V, T, E, L>["errorSignalFrom"]>(options, "errorSignalFrom", "errorSignalFrom"),
