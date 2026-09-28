@@ -802,7 +802,10 @@ function readRecoverInput<
 >(
   input: RecoverInput<S, T, V, E>,
   undefinedObjectProperties?: "omit",
-): RecoverInput<S, T, V, E> {
+): Omit<RecoverInput<S, T, V, E>, "originalState" | "submittedState"> & {
+  readonly originalState: S
+  readonly submittedState: T
+} {
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
     throw new CAMConfigError("recover input must be an object")
   }
