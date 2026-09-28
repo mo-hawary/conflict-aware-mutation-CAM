@@ -2,15 +2,36 @@ name: CI
 
 on:
   pull_request:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# Required test/package check names remain unchanged. Avoid a duplicate full
+# matrix after squash-merging the already-checked PR.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      runtimes: ${{ steps.scope.outputs.runtimes }}
+      react: ${{ steps.scope.outputs.react }}
+      playground: ${{ steps.scope.outputs.playground }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: scope
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/ci-scope.mjs
+
   pr-title:
     if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
@@ -102,7 +123,8 @@ jobs:
         run: npm run size
 
   runtimes:
-    needs: test
+    needs: [test, changes]
+    if: needs.changes.outputs.runtimes == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -145,7 +167,8 @@ jobs:
         run: node test/runtime/browser.mjs
 
   react-example:
-    needs: test
+    needs: [test, changes]
+    if: needs.changes.outputs.react == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -172,7 +195,8 @@ jobs:
           npm test
 
   playground:
-    needs: test
+    needs: [test, changes]
+    if: needs.changes.outputs.playground == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

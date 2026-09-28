@@ -100,7 +100,7 @@ Review the generated changelog and packaged README in the release PR. A docs-onl
 
 ## API documentation
 
-The API reference deploys from `main` through `.github/workflows/docs.yml`. Configure Settings → Pages → Source as **GitHub Actions**. The docs build runs TypeDoc with isolated pinned TypeScript 6 while the project uses TypeScript 7. API docs on `main` can be ahead of the latest npm release; the npm version badge is not a source-version indicator.
+The API reference deploys from `main` through `.github/workflows/docs.yml`. Configure Settings → Pages → Source as **GitHub Actions**, then set the repository Actions variable `ENABLE_PAGES=true`. Until enabled, docs builds run without attempting deployment. The docs build runs TypeDoc with isolated pinned TypeScript 6 while the project uses TypeScript 7. API docs on `main` can be ahead of the latest npm release; the npm version badge is not a source-version indicator.
 
 ## Automatic merging of release PRs
 
@@ -111,3 +111,11 @@ The workflow executes only trusted code from `main`. It verifies the owner accou
 The existing token must belong to `@mo-hawary` and have repository Contents and Pull requests write access plus Actions read access. The workflow fails explicitly if the token is missing or belongs to another identity; it never falls back to `GITHUB_TOKEN`. It does not weaken repository protections. If a release PR already passed CI before this workflow reached `main`, manually dispatch **Auto-merge release PR**, or rerun its CI.
 
 Merging a release PR continues the normal release pipeline: Release Please creates the tag and GitHub Release, which can trigger npm publication subject to the existing `npm` environment and publishing checks. To pause this automation, disable **Auto-merge release PR** in Actions. Unexpected diffs or failed checks leave the PR open for review.
+
+## CI scope
+
+Required Node 22/24 test and package checks still run on every PR, including release PRs. They verify the actual package being released and retain their existing protection-rule names. The full CI matrix no longer repeats on every push to `main`; manual dispatch remains available.
+
+Browser/Deno/Bun, React, and playground jobs run only when their code or shared runtime/build inputs change. Version-only root package changes and Markdown changes do not trigger those optional jobs. CodeQL runs for code/workflow changes and on its weekly schedule. API docs run for reference inputs; benchmarks are manual, report-only runs. Superseded CI runs on the same PR are cancelled.
+
+A successful npm upload can precede registry attestation availability. Publishing retries attestation 404 responses for up to five minutes, then still requires successful cryptographic verification. Invalid signatures fail immediately. Historical failed run records remain historical; do not move tags or republish versions to make the Actions list green.
