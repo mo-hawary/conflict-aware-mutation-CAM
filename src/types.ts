@@ -232,3 +232,9 @@ export type ResolveConflictReportedResult<T extends JsonValue = JsonValue> =
 export type ResolveConflictGroupedReportedResult<T extends JsonValue = JsonValue> =
   | { matched: false; error: ErrorSignal }
   | { matched: true; result: GroupedMergeResultWithReport<T> }
+
+export type ResolveRuntimeResult<T extends JsonValue = JsonValue> =
+  | ResolveConflictResult<T>
+  | ResolveConflictGroupedResult<T>
+  | ResolveConflictReportedResult<T>
+  | ResolveConflictGroupedReportedResult<T>
