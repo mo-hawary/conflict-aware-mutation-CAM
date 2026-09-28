@@ -1,16 +1,20 @@
 import {
   createRecoveryController,
   type CandidateValidation,
+  type NormalizedRecoveryControllerOptions,
   type RecoveryControllerOptions,
   type RecoveryOutcome,
   type RecoveryToken,
 } from "../../src/recovery/index.js"
-import type { JsonValue } from "../../src/types.js"
+import type {
+  JsonValue,
+  JsonValueWithUndefinedObjectProperties,
+} from "../../src/types.js"
 
 type State = { title: string }
 type Latest = { state: State; etag: string }
 
-const options: RecoveryControllerOptions<State, string, State, string, Latest> = {
+const strictOptions: RecoveryControllerOptions<State, string, State, string, Latest> = {
   expectedError: { code: 412 },
   errorSignalFrom: (cause) =>
     cause !== null && typeof cause === "object" && "status" in cause
@@ -18,10 +22,53 @@ const options: RecoveryControllerOptions<State, string, State, string, Latest> =
       : undefined,
   fetchLatest: async () => ({ state: { title: "server" }, etag: '"v2"' }),
   getVersion: (latest) => latest.etag,
-  isTerminal: (state) => state.title === "deleted",
+  isTerminal: () => false,
   project: (merged) => merged,
   prepareCandidate: (candidate) => candidate as State,
   validateCandidate: (candidate): CandidateValidation<State> => ({
+    valid: true,
+    value: candidate,
+  }),
+  mutate: async (candidate, { expectedVersion }) => ({
+    state: candidate,
+    version: expectedVersion,
+  }),
+  isCurrent: () => true,
+}
+
+const strictController = createRecoveryController(strictOptions)
+void strictController.recover({
+  entityId: "order-1",
+  sessionId: "strict-session",
+  draftRevision: 0,
+  expectedVersion: '"v1"',
+  originalState: { title: "original" },
+  submittedState: { title: "local" },
+})
+
+declare const parserState: JsonValueWithUndefinedObjectProperties
+// @ts-expect-error strict recovery accepts only the declared strict state type
+strictController.recover({
+  entityId: "order-1",
+  sessionId: "strict-session",
+  draftRevision: 0,
+  expectedVersion: '"v1"',
+  originalState: parserState,
+  submittedState: parserState,
+})
+
+const normalizedOptions: NormalizedRecoveryControllerOptions<string, string, Latest> = {
+  expectedError: { code: 412 },
+  errorSignalFrom: (cause) =>
+    cause !== null && typeof cause === "object" && "status" in cause
+      ? { code: Number(cause.status) }
+      : undefined,
+  fetchLatest: async () => ({ state: { title: "server" }, etag: '"v2"' }),
+  getVersion: (latest) => latest.etag,
+  isTerminal: () => false,
+  project: (merged) => merged,
+  prepareCandidate: (candidate) => candidate,
+  validateCandidate: (candidate): CandidateValidation<JsonValue> => ({
     valid: true,
     value: candidate,
   }),
@@ -34,7 +81,7 @@ const options: RecoveryControllerOptions<State, string, State, string, Latest> =
   undefinedObjectProperties: "omit",
 }
 
-const controller = createRecoveryController<State, string, State, string, Latest>(options)
+const controller = createRecoveryController(normalizedOptions)
 const pending = controller.recover({
   entityId: "order-1",
   sessionId: "session-1",
@@ -46,16 +93,20 @@ const pending = controller.recover({
 
 async function consumeOutcome(): Promise<void> {
   const outcome = await pending
+  const broad: RecoveryOutcome<JsonValue, JsonValue, string, string> = outcome
+  void broad
+
   if (outcome.kind === "review-ready") {
     const token: RecoveryToken = outcome.token
-    const confirmed: RecoveryOutcome<State, State, string, string> =
-      await controller.confirm(token)
-    void confirmed
+    outcome.candidate satisfies JsonValue
+    const confirmed = await controller.confirm(token)
+    if (confirmed.kind === "saved") confirmed.state satisfies JsonValue
     await controller.reviseCandidate(token, { title: "edited" }, 1)
   } else if (outcome.kind === "conflicts") {
+    outcome.currentServerState satisfies JsonValue
     await controller.reviseCandidate(outcome.handle, { title: "chosen" }, 1)
   } else if (outcome.kind === "changed-again") {
-    outcome.currentServerState.title satisfies string
+    outcome.currentServerState satisfies JsonValue
     outcome.latestVersion satisfies string
   }
 }
