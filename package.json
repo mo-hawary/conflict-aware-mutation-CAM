@@ -53,6 +53,11 @@
     "size-limit": "14.1.0",
     "typescript": "7.0.2"
   },
+  "overrides": {
+    "typed-rest-client": {
+      "qs": "^6.16.0"
+    }
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
