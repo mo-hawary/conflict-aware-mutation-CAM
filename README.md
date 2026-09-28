@@ -109,7 +109,8 @@ For each path, one-sided changes are kept, identical changes agree, and differen
 | Missing object property | Deletion; distinct from explicit `null` |
 | Null-prototype objects | Accepted; outputs use `Object.prototype` |
 | Shared non-cyclic references | Copied independently; outputs do not alias inputs |
-| `Date`, `Map`, `Set`, class instances, `BigInt`, functions, `undefined`, non-finite numbers | Rejected with `CAMConfigError` |
+| `Date`, `Map`, `Set`, class instances, `BigInt`, functions, non-finite numbers | Rejected with `CAMConfigError` |
+| `undefined` | Rejected by default; own enumerable object properties may be treated as absent with `undefinedObjectProperties: "omit"` |
 | Symbols, symbol keys, cycles, nesting beyond 512 levels | Rejected with `CAMConfigError` |
 | Enumerable object accessors; array-index accessors | Rejected without invoking getters |
 | Array subclasses, holes, non-enumerable indices, extra enumerable non-index array properties | Rejected with `CAMConfigError` |
@@ -170,7 +171,9 @@ Pass `includeReport: true` to include optional change provenance on success and 
 
 ### Recovery adapter
 
-`createRecoveryController()` lives at `conflict-aware-mutation/recovery`. It accepts the application's versioned mutation, fetch, preparation, validation, and terminal-state callbacks. A stale mutation fetches the newest state and returns a review candidate or conflicts. The recovery write requires an explicit one-use confirmation token and the latest version. `autoRetry: "once"` is an opt-in for one clean automatic recovery write; it still uses the fetched version and returns `changed-again` if that write loses another race.
+`createRecoveryController()` lives at `conflict-aware-mutation/recovery`. It accepts the application's versioned mutation, fetch, preparation, validation, and terminal-state callbacks. A stale mutation fetches the newest state and returns a review candidate or conflicts. Configure `groups` to preserve coupled-path semantics inside the controller and `undefinedObjectProperties: "omit"` when parser-style own object properties set to `undefined` should mean absence. The recovery write requires an explicit one-use confirmation token and the latest version. `autoRetry: "once"` is an opt-in for one clean automatic recovery write.
+
+If that recovery write loses another version race, `changed-again` returns both the preserved candidate and the exact `currentServerState` / `latestVersion` baseline that produced it. Use that pair as the next `originalState` / `expectedVersion` when continuing recovery; this prevents server-only changes from being reclassified as user edits. A mutation that the backend already accepted is reported as `saved` even if navigation or cancellation happens while its response is in flight—cancellation cannot undo an accepted write.
 
 ### `CAMConfigError`
 
@@ -195,7 +198,7 @@ Examples are application code, not extra runtime exports. Their dependencies do 
 
 CAM targets stale CRUD writes: customer profiles, inventory metadata, settings, and content records. It is not a CRDT, collaborative text editor, mutation-testing tool, or replacement for backend concurrency checks.
 
-CI exercises the merge truth table, deletion and array semantics, property-based comparison against a reference implementation, input immutability, depth boundaries, and large conflict sets. It also checks the installed package, types, coverage, bundle budget, and integration examples. Benchmarks are report-only; runtime smoke tests are not a claim of exhaustive production coverage.
+CI exercises the merge truth table, deletion and array semantics, property-based comparison against a reference implementation, input immutability, depth boundaries, and large conflict sets. It also checks the installed package, types, coverage, explicit root/recovery bundle budgets, and integration examples. Benchmarks are report-only; runtime smoke tests are not a claim of exhaustive production coverage.
 
 ## Contribute
 
