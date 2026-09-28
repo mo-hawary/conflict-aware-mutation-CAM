@@ -62,7 +62,7 @@ Pass explicit `groups` to treat related paths as one decision unit. This changes
 
 The optional callback-based controller is imported from `conflict-aware-mutation/recovery`, not the package root. It checks the latest state before producing a review candidate and requires explicit confirmation with the fetched version by default. `autoRetry: "once"` enables one recovery write for a clean merge; it does not remove the backend version precondition.
 
-The controller now accepts `groups` for the same coupled-path semantics used by `mergeStates()`, plus `undefinedObjectProperties: "omit"` for parser-style object properties. In normalized mode, use a broad JSON type until your application validator has re-established the domain type.
+The controller now accepts `groups` for the same coupled-path semantics used by `mergeStates()`; group configuration is validated eagerly at controller creation. It also accepts `undefinedObjectProperties: "omit"` for parser-style object properties. TypeScript exposes that normalized controller as broad `JsonValue` for its recover inputs, saved values, and recovery baselines, because omission can remove fields that a domain type marked as required. Use the strict `RecoveryControllerOptions` type when omission is disabled and `NormalizedRecoveryControllerOptions` when it is enabled; narrow normalized values only after application validation.
 
 When a confirmed or automatic recovery write loses another version race, the `changed-again` outcome includes `candidate`, `currentServerState`, and `latestVersion`. Continue with that server snapshot as the new `originalState` and that version as the new `expectedVersion`; using the older editing baseline can misclassify earlier server-only changes as local edits.
 
