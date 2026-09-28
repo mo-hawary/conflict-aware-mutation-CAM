@@ -109,7 +109,7 @@ async function confirmReview(entry) {
 
 test("review does not write before explicit confirmation and cancel performs no write", async () => {
   const initial = loaded(order({ notes: "original" }), "e1")
-  const latest = loaded(order({ status: "approved" }), "e2")
+  const latest = loaded(order({ status: "approved", notes: "original" }), "e2")
   const puts = []
   const api = {
     fetchOrder: async () => puts.length ? latest : initial,
