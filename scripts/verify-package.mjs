@@ -50,7 +50,14 @@ try {
   const tarball = path.join(packDir, packed.filename)
   assert(existsSync(tarball), `packed tarball missing: ${tarball}`)
 
-  for (const required of ["dist/index.js", "dist/index.d.ts", "src/index.ts"]) {
+  for (const required of [
+    "dist/index.js",
+    "dist/index.d.ts",
+    "dist/recovery/index.js",
+    "dist/recovery/index.d.ts",
+    "src/index.ts",
+    "src/recovery/index.ts",
+  ]) {
     assert(packedPaths.includes(required), `required packed file missing: ${required}`)
   }
   assert(!packedPaths.some((file) => file.startsWith("test/")), "tests leaked into package")
@@ -97,8 +104,17 @@ try {
   const runtimeTest = `
 import assert from "node:assert/strict"
 import * as cam from "conflict-aware-mutation"
+import * as recovery from "conflict-aware-mutation/recovery"
 
-assert.deepEqual(Object.keys(cam).sort(), ["CAMConfigError", "matchConflictError", "mergeStates"])
+assert.deepEqual(Object.keys(cam).sort(), [
+  "CAMConfigError",
+  "applyConflictDecisions",
+  "formatConflictPath",
+  "matchConflictError",
+  "mergeStates",
+  "resolveConflict",
+])
+assert.deepEqual(Object.keys(recovery).sort(), ["createRecoveryController"])
 
 assert.deepEqual(
   cam.matchConflictError({
@@ -143,13 +159,52 @@ assert.deepEqual(
     ],
   },
 )
+
+assert.deepEqual(
+  cam.mergeStates({
+    originalState: { name: "A", serverOnly: false },
+    submittedState: { name: "B", serverOnly: false },
+    currentServerState: { name: "A", serverOnly: true },
+    groups: undefined,
+    includeReport: undefined,
+  }),
+  { ok: true, value: { name: "B", serverOnly: true }, conflicts: [] },
+)
+
+const conflict = cam.mergeStates({
+  originalState: { status: "pending" },
+  submittedState: { status: "cancelled" },
+  currentServerState: { status: "paid" },
+}).conflicts[0]
+assert.deepEqual(
+  cam.applyConflictDecisions({
+    sessionId: "package-smoke",
+    originalState: { status: "pending" },
+    submittedState: { status: "cancelled" },
+    currentServerState: { status: "paid" },
+    decisions: [{ sessionId: "package-smoke", conflict, choice: "currentServer" }],
+  }),
+  { ok: true, value: { status: "paid" }, conflicts: [] },
+)
+assert.equal(cam.formatConflictPath(["a/b", "x~y"]), "/a~1b/x~0y")
+assert.deepEqual(
+  cam.mergeStates({
+    originalState: { note: "old" },
+    submittedState: { note: undefined },
+    currentServerState: { note: "old" },
+    undefinedObjectProperties: "omit",
+  }),
+  { ok: true, value: {}, conflicts: [] },
+)
 `
   writeFileSync(path.join(consumerDir, "runtime.mjs"), runtimeTest)
   run("node", ["runtime.mjs"], { cwd: consumerDir })
 
   const typeConsumer = `
-import { CAMConfigError, matchConflictError, mergeStates } from "conflict-aware-mutation"
-import type { ErrorSignal, JsonValue, MergeResult } from "conflict-aware-mutation"
+import { CAMConfigError, applyConflictDecisions, formatConflictPath, matchConflictError, mergeStates, resolveConflict } from "conflict-aware-mutation"
+import type { ErrorSignal, JsonValue, MergeResult, PathGroup } from "conflict-aware-mutation"
+import { createRecoveryController } from "conflict-aware-mutation/recovery"
+import type { NormalizedRecoveryControllerOptions, RecoveryController, RecoveryOutcome } from "conflict-aware-mutation/recovery"
 
 const error: ErrorSignal = { code: 409, text: "Order was modified" }
 const match = matchConflictError({ error, expectedError: { code: 409 } })
@@ -163,9 +218,28 @@ const result: MergeResult<typeof submittedState> = mergeStates({
   currentServerState,
 })
 
+const optionalUndefinedResult: MergeResult<typeof submittedState> = mergeStates({
+  originalState,
+  submittedState,
+  currentServerState,
+  groups: undefined,
+  includeReport: undefined,
+})
+
 void CAMConfigError
 void match
 void result
+void optionalUndefinedResult
+void (null as unknown as NormalizedRecoveryControllerOptions<string>)
+void applyConflictDecisions
+void formatConflictPath
+void resolveConflict
+void createRecoveryController
+void (null as unknown as PathGroup)
+const outcome = null as unknown as RecoveryOutcome
+const controller = null as unknown as RecoveryController<JsonValue, string>
+void outcome
+void controller
 `
   writeFileSync(path.join(consumerDir, "consumer.ts"), typeConsumer)
   writeFileSync(

@@ -97,7 +97,15 @@ export function normalizeErrorOutput(value: unknown): ErrorOutput {
  * becomes `0`, so two snapshots with the same key set enumerate keys in the
  * same order.
  */
-export function snapshotJsonValue(value: unknown, label = "value"): JsonValue {
+export function snapshotJsonValue(
+  value: unknown,
+  label = "value",
+  undefinedObjectProperties?: "omit",
+): JsonValue {
+  if (undefinedObjectProperties !== undefined && undefinedObjectProperties !== "omit") {
+    throw new CAMConfigError('undefinedObjectProperties must be "omit" when provided')
+  }
+
   const ancestors = new Set<object>()
   const path: PathSegment[] = []
 
@@ -160,7 +168,11 @@ export function snapshotJsonValue(value: unknown, label = "value"): JsonValue {
 
     let copy: JsonValue
     if (isArray) {
-      const length = (source as unknown[]).length
+      const lengthValue = readData(source, "length", "must have an own array length")
+      if (typeof lengthValue !== "number" || !Number.isInteger(lengthValue) || lengthValue < 0) {
+        fail("must have a valid array length")
+      }
+      const length = lengthValue as number
       const shape = "must be an array without holes or extra properties"
       if (keys.length !== length) fail(shape)
       const items: JsonValue[] = new Array(length)
@@ -175,7 +187,16 @@ export function snapshotJsonValue(value: unknown, label = "value"): JsonValue {
       const object: { [key: string]: JsonValue } = {}
       for (const key of keys) {
         path.push(key)
-        defineJsonProperty(object, key, visit(readData(source, key, "changed during validation"), depth + 1))
+        const child = readData(source, key, "changed during validation")
+        if (child === undefined && undefinedObjectProperties === "omit") {
+          path.pop()
+          continue
+        }
+        defineJsonProperty(
+          object,
+          key,
+          visit(child, depth + 1),
+        )
         path.pop()
       }
       copy = object

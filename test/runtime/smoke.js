@@ -2,7 +2,14 @@
 // no Node built-ins, so the same file runs in Node, Deno, Bun, and browsers.
 // `cam` is the module namespace imported from dist/index.js.
 export function runSmoke(cam) {
-  const { CAMConfigError, matchConflictError, mergeStates } = cam
+  const {
+    CAMConfigError,
+    applyConflictDecisions,
+    formatConflictPath,
+    matchConflictError,
+    mergeStates,
+    resolveConflict,
+  } = cam
   const results = []
 
   const check = (name, fn) => {
@@ -28,7 +35,14 @@ export function runSmoke(cam) {
     throw new Error("expected CAMConfigError, nothing was thrown")
   }
 
-  check("exports", () => equal(Object.keys(cam).sort(), ["CAMConfigError", "matchConflictError", "mergeStates"]))
+  check("exports", () => equal(Object.keys(cam).sort(), [
+    "CAMConfigError",
+    "applyConflictDecisions",
+    "formatConflictPath",
+    "matchConflictError",
+    "mergeStates",
+    "resolveConflict",
+  ]))
 
   check("clean nested merge", () =>
     equal(
@@ -68,6 +82,50 @@ export function runSmoke(cam) {
     equal(
       matchConflictError({ error: { code: 500, text: "boom" }, expectedError: { code: 409 }, errorOutput: { text: "Try again" } }),
       { matched: false, error: { code: 500, text: "Try again" } },
+    )
+  })
+
+  check("manual decisions match current conflicts and session", () => {
+    const input = {
+      originalState: { status: "pending" },
+      submittedState: { status: "cancelled" },
+      currentServerState: { status: "paid" },
+    }
+    const conflict = mergeStates(input).conflicts[0]
+    equal(
+      applyConflictDecisions({
+        ...input,
+        sessionId: "smoke-session",
+        decisions: [{ sessionId: "smoke-session", conflict, choice: "currentServer" }],
+      }),
+      { ok: true, value: { status: "paid" }, conflicts: [] },
+    )
+  })
+
+  check("optional undefined omission and conflict path formatting", () => {
+    equal(
+      mergeStates({
+        originalState: { note: "old" },
+        submittedState: { note: undefined },
+        currentServerState: { note: "old" },
+        undefinedObjectProperties: "omit",
+      }),
+      { ok: true, value: {}, conflicts: [] },
+    )
+    equal(formatConflictPath(["a/b", "x~y", 3]), "/a~1b/x~0y/3")
+    equal(formatConflictPath([]), "")
+  })
+
+  check("resolveConflict matches before merging", () => {
+    equal(
+      resolveConflict({
+        error: { code: 500 },
+        expectedError: { code: 409 },
+        originalState: {},
+        submittedState: {},
+        currentServerState: {},
+      }),
+      { matched: false, error: { code: 500 } },
     )
   })
 

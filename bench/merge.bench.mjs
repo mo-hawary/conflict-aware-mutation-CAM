@@ -4,6 +4,7 @@
 import { writeFileSync } from "node:fs"
 import { pathToFileURL } from "node:url"
 import { resolve } from "node:path"
+import { mergeArrayById } from "./prototypes/array-by-id.mjs"
 
 const distPath = process.env.CAM_DIST
   ? pathToFileURL(resolve(process.env.CAM_DIST)).href
@@ -13,15 +14,15 @@ const { mergeStates } = await import(distPath)
 const BUDGET_MS = Number(process.env.CAM_BENCH_MS ?? 500)
 const results = {}
 
-function bench(name, makeInput) {
+function bench(name, makeInput, run = mergeStates) {
   const input = makeInput()
-  for (let warmup = 0; warmup < 5; warmup += 1) mergeStates(input)
+  for (let warmup = 0; warmup < 5; warmup += 1) run(input)
 
   let iterations = 0
   const start = performance.now()
   let elapsed = 0
   while (elapsed < BUDGET_MS) {
-    mergeStates(input)
+    run(input)
     iterations += 1
     elapsed = performance.now() - start
   }
@@ -68,6 +69,19 @@ bench("order form, clean merge", () => {
   }
 })
 
+bench(
+  "order form, clean merge with report",
+  () => {
+    const originalState = order()
+    return {
+      originalState,
+      submittedState: order({ shippingAddress: { ...originalState.shippingAddress, city: "Giza" } }),
+      currentServerState: order({ customer: { ...originalState.customer, phone: "222" } }),
+    }
+  },
+  (input) => mergeStates({ ...input, includeReport: true }),
+)
+
 bench("order form, 3 conflicts", () => ({
   originalState: order(),
   submittedState: order({ status: "paid", notes: "Ring", tags: ["gift"] }),
@@ -98,11 +112,83 @@ bench("atomic arrays, 5k items", () => {
   }
 })
 
+const sparseArrayScenario = () => {
+  const originalState = Array.from({ length: 200 }, (_, index) => ({
+    id: `item-${index}`,
+    qty: 1,
+    price: index + 10,
+  }))
+  const submittedState = originalState.map((item, index) =>
+    index === 10 ? { ...item, qty: 2 } : { ...item },
+  )
+  const currentServerState = originalState.map((item, index) =>
+    index === 150 ? { ...item, price: item.price + 5 } : { ...item },
+  )
+  return { originalState, submittedState, currentServerState }
+}
+
+bench("atomic arrays, 200 sparse record edits", () => {
+  const { originalState, submittedState, currentServerState } = sparseArrayScenario()
+  return {
+    originalState: { items: originalState },
+    submittedState: { items: submittedState },
+    currentServerState: { items: currentServerState },
+  }
+})
+
+bench(
+  "experimental ID arrays, 200 sparse edits",
+  sparseArrayScenario,
+  mergeArrayById,
+)
+
 bench("10k conflicts", () => ({
   originalState: wide(10_000, (index) => index),
   submittedState: wide(10_000, (index) => -index - 1),
   currentServerState: wide(10_000, (index) => index + 1e6),
 }))
+
+if (typeof globalThis.gc === "function") {
+  const allocationInput = (() => {
+    const originalState = order()
+    return {
+      originalState,
+      submittedState: order({
+        status: "processing",
+        notes: "Ring twice",
+        shippingAddress: { ...originalState.shippingAddress, city: "Giza" },
+      }),
+      currentServerState: order({
+        status: "cancelled",
+        customer: { ...originalState.customer, phone: "222" },
+        tags: ["gift"],
+      }),
+    }
+  })()
+  const retainedCount = Number(process.env.CAM_BENCH_RETAINED_RESULTS ?? 2_000)
+  const retainedHeapPerResult = (includeReport) => {
+    globalThis.gc()
+    const before = process.memoryUsage().heapUsed
+    const retained = []
+    for (let index = 0; index < retainedCount; index += 1) {
+      retained.push(mergeStates({
+        ...allocationInput,
+        ...(includeReport ? { includeReport: true } : {}),
+      }))
+    }
+    globalThis.gc()
+    const after = process.memoryUsage().heapUsed
+    const bytes = (after - before) / retainedCount
+    retained.length = 0
+    globalThis.gc()
+    return bytes
+  }
+  const withoutReport = retainedHeapPerResult(false)
+  const withReport = retainedHeapPerResult(true)
+  console.log(`retained output heap, reports off/on: ${withoutReport.toFixed(1)} / ${withReport.toFixed(1)} bytes/result`)
+} else {
+  console.log("retained output heap measurement skipped; run Node with --expose-gc")
+}
 
 if (process.env.CAM_BENCH_JSON) {
   writeFileSync(process.env.CAM_BENCH_JSON, `${JSON.stringify(results, null, 2)}\n`)

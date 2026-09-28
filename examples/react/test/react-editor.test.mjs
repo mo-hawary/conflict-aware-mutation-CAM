@@ -53,24 +53,24 @@ const order = (overrides = {}) => ({
   ...overrides,
 })
 const loaded = (state, etag) => ({ state, etag })
-async function mountEditor(id, api) {
+async function mountEditor(id, api, recovery) {
   const client = new QueryClient({
     defaultOptions: {
       queries: { retry: false, gcTime: 0, refetchOnWindowFocus: false },
       mutations: { retry: false },
     },
   })
-  const entry = { ...render(renderEditor({ client, api }, id)), client, api }
+  const entry = { ...render(renderEditor({ client, api }, id, recovery)), client, api }
   await waitFor(() => assert.ok(entry.getByLabelText("Notes")))
   mounted.push(entry)
   return entry
 }
 
-function renderEditor(entry, id) {
+function renderEditor(entry, id, recovery) {
   return React.createElement(
     QueryClientProvider,
     { client: entry.client },
-    React.createElement(OrderEditor, { id, api: entry.api }),
+    React.createElement(OrderEditor, { id, api: entry.api, recovery }),
   )
 }
 
@@ -100,11 +100,186 @@ async function applyChoices(entry) {
   fireEvent.click(apply)
 }
 
+async function confirmReview(entry) {
+  const confirm = button(entry, "Confirm")
+  assert.ok(confirm, "the review should offer an explicit Confirm action")
+  assert.equal(confirm.disabled, false, "the candidate must be valid and fully resolved before confirmation")
+  fireEvent.click(confirm)
+}
+
+test("review does not write before explicit confirmation and cancel performs no write", async () => {
+  const initial = loaded(order({ notes: "original" }), "e1")
+  const latest = loaded(order({ status: "approved", notes: "original" }), "e2")
+  const puts = []
+  const api = {
+    fetchOrder: async () => puts.length ? latest : initial,
+    putOrder: async (_id, state, etag) => {
+      puts.push({ state: structuredClone(state), etag })
+      if (puts.length === 1) throw staleWrite()
+      return loaded(structuredClone(state), "e3")
+    },
+  }
+  const entry = await mountEditor("one", api)
+  changeNotes(entry, "mine")
+  await submit(entry)
+  await waitFor(() => assert.equal(puts.length, 1))
+  await waitFor(() => assert.equal(button(entry, "Confirm").disabled, false))
+  fireEvent.click(button(entry, "Cancel"))
+  assert.equal(puts.length, 1)
+})
+
+test("a conflict cannot be confirmed until each choice is explicitly applied", async () => {
+  const fetchQueue = [loaded(order({ notes: "original" }), "e1"), loaded(order({ notes: "server" }), "e2")]
+  const puts = []
+  const api = {
+    fetchOrder: async () => fetchQueue.shift(),
+    putOrder: async (_id, state, etag) => {
+      puts.push({ state: structuredClone(state), etag })
+      if (puts.length === 1) throw staleWrite()
+      return loaded(structuredClone(state), "e3")
+    },
+  }
+  const entry = await mountEditor("one", api)
+  changeNotes(entry, "mine")
+  await submit(entry)
+  await waitFor(() => assert.equal(radioInputs(entry).length, 2))
+  assert.equal(radioInputs(entry).every((input) => !input.checked), true)
+  assert.equal(button(entry, "Apply choices").disabled, true)
+  assert.equal(button(entry, "Confirm").disabled, true)
+})
+
 async function waitForPuts(puts, count) {
   await waitFor(() => assert.equal(puts.length, count))
 }
 
 const staleWrite = () => Object.assign(new Error("stale write"), { code: "STALE_WRITE" })
+
+test("invalid review candidates stay visible and require repair before confirmation", async () => {
+  const fetchQueue = [
+    loaded(order({ notes: "before" }), "e1"),
+    loaded(order({ status: "approved", notes: "before" }), "e2"),
+  ]
+  const puts = []
+  const api = {
+    fetchOrder: async () => fetchQueue.shift(),
+    putOrder: async (_id, state, etag) => {
+      puts.push({ state: structuredClone(state), etag })
+      if (puts.length === 1) throw staleWrite()
+      return loaded(structuredClone(state), "e3")
+    },
+  }
+  const recovery = {
+    prepareCandidate: (candidate) => ({ ...candidate, notes: candidate.notes.trim() }),
+    validateCandidate: (candidate) => candidate.notes === "invalid" ? "Notes need correction" : undefined,
+  }
+  const entry = await mountEditor("one", api, recovery)
+  changeNotes(entry, "invalid")
+  await submit(entry)
+  await waitFor(() => assert.equal(button(entry, "Confirm").disabled, true))
+  assert.equal(puts.length, 1, "an invalid candidate is never persisted")
+  assert.match(entry.getByRole("alert").textContent, /Notes need correction/)
+
+  changeNotes(entry, "fixed")
+  await waitFor(() => assert.equal(button(entry, "Confirm").disabled, false))
+  assert.equal(notesInput(entry).value, "fixed")
+  await confirmReview(entry)
+  await waitForPuts(puts, 2)
+  assert.equal(puts[1].etag, "e2")
+  assert.equal(puts[1].state.notes, "fixed")
+})
+
+test("a conflict stays visible when the fallback candidate fails validation", async () => {
+  // Regression: validating the unresolved fallback (submittedState) used to
+  // drop the conflicts, so fixing the field allowed Confirm without a choice.
+  const fetchQueue = [
+    loaded(order({ notes: "before" }), "e1"),
+    loaded(order({ notes: "server" }), "e2"),
+  ]
+  const puts = []
+  const api = {
+    fetchOrder: async () => fetchQueue.shift(),
+    putOrder: async (_id, state, etag) => {
+      puts.push({ state: structuredClone(state), etag })
+      if (puts.length === 1) throw staleWrite()
+      return loaded(structuredClone(state), "e3")
+    },
+  }
+  const recovery = {
+    validateCandidate: (candidate) => candidate.notes === "invalid" ? "Notes need correction" : undefined,
+  }
+  const entry = await mountEditor("one", api, recovery)
+  changeNotes(entry, "invalid")
+  await submit(entry)
+  await waitFor(() => assert.equal(radioInputs(entry).length, 2))
+  assert.equal(button(entry, "Confirm").disabled, true)
+
+  changeNotes(entry, "fixed")
+  await waitFor(() => assert.equal(notesInput(entry).value, "fixed"))
+  assert.equal(radioInputs(entry).length, 2, "the conflict still needs an explicit choice")
+  assert.equal(button(entry, "Confirm").disabled, true)
+  assert.equal(puts.length, 1)
+})
+
+test("terminal latest state blocks choices and confirmation", async () => {
+  const fetchQueue = [
+    loaded(order(), "e1"),
+    loaded(order({ status: "cancelled" }), "e2"),
+  ]
+  const puts = []
+  const api = {
+    fetchOrder: async () => fetchQueue.shift(),
+    putOrder: async (_id, state, etag) => {
+      puts.push({ state, etag })
+      throw staleWrite()
+    },
+  }
+  const entry = await mountEditor("one", api, {
+    isTerminal: (state) => state.status === "cancelled",
+  })
+  changeNotes(entry, "mine")
+  await submit(entry)
+  await waitFor(() => assert.ok(entry.getByRole("group", { name: "This order can no longer be edited" })))
+  assert.equal(button(entry, "Confirm").disabled, true)
+  assert.equal(button(entry, "Save").disabled, true)
+  assert.equal(
+    entry.queryByRole("button", { name: "Cancel" }),
+    null,
+    "terminal state cannot be dismissed into an editable form",
+  )
+  assert.equal(puts.length, 1)
+})
+
+test("a stale confirmation returns to review without an automatic second recovery write", async () => {
+  const fetchQueue = [
+    loaded(order(), "e1"),
+    loaded(order({ status: "approved" }), "e2"),
+    loaded(order({ status: "shipped" }), "e3"),
+  ]
+  const puts = []
+  const api = {
+    fetchOrder: async () => fetchQueue.shift(),
+    putOrder: async (_id, state, etag) => {
+      puts.push({ state: structuredClone(state), etag })
+      if (puts.length <= 2) throw staleWrite()
+      return loaded(structuredClone(state), "e4")
+    },
+  }
+  const entry = await mountEditor("one", api)
+  changeNotes(entry, "mine")
+  await submit(entry)
+  await waitForPuts(puts, 1)
+  await confirmReview(entry)
+  await waitForPuts(puts, 2)
+  await waitFor(() => assert.equal(button(entry, "Confirm").disabled, false))
+  assert.equal(puts.length, 2, "a second stale response cannot trigger another write")
+  assert.equal(puts[1].etag, "e2")
+
+  await confirmReview(entry)
+  await waitForPuts(puts, 3)
+  assert.equal(puts[2].etag, "e3", "the refreshed review is guarded by the newest ETag")
+  assert.equal(puts[2].state.status, "shipped")
+  assert.equal(puts[2].state.notes, "mine")
+})
 
 test("a refetch started during a save cannot replace saved cache data or subscribers", async () => {
   const initial = loaded(order(), "e1")
@@ -160,7 +335,7 @@ test("a refetch started during a save cannot replace saved cache data or subscri
   observer.destroy()
 })
 
-test("keeps a dirty draft across refetch, merges, then saves against the refreshed ETag", async () => {
+test("keeps a dirty draft across refetch, reviews the merge, then confirms against the refreshed ETag", async () => {
   const initial = loaded(order(), "e1")
   const refetched = loaded(order({ status: "approved" }), "e2")
   const currentAfterStale = loaded(order({ status: "approved" }), "e2")
@@ -183,10 +358,20 @@ test("keeps a dirty draft across refetch, merges, then saves against the refresh
   assert.equal(notesInput(entry).value, "mine", "background data must not replace the draft")
 
   await submit(entry)
-  await waitForPuts(puts, 2)
+  await waitForPuts(puts, 1)
   assert.equal(puts[0].etag, "e1")
+  assert.equal(button(entry, "Confirm").disabled, false)
+  assert.equal(button(entry, "Save").disabled, true)
+  assert.equal(puts.length, 1, "a clean structural merge is review-only")
+  assert.deepEqual(
+    [...entry.container.querySelectorAll('[aria-label="Change summary"] li')].map((item) => item.textContent),
+    ["/notes: submitted-only", "/status: server-only"],
+  )
+
+  await confirmReview(entry)
+  await waitForPuts(puts, 2)
   assert.equal(puts[1].etag, "e2")
-  assert.equal(puts[1].state.status, "approved", "the automatic merge keeps the server-only change")
+  assert.equal(puts[1].state.status, "approved", "the reviewed merge keeps the server-only change")
   assert.equal(notesInput(entry).value, "mine")
 
   changeNotes(entry, "mine again")
@@ -227,7 +412,7 @@ test("preserves edits made while a save is pending and prevents duplicate reques
   assert.equal(puts[1].state.notes, "typed while saving")
 })
 
-test("automatic merge adopts server changes and preserves notes typed during the save", async () => {
+test("review edits are revalidated and confirmation adopts server changes", async () => {
   const fetchQueue = [
     loaded(order(), "e1"),
     loaded(order({ status: "approved" }), "e2"),
@@ -248,20 +433,27 @@ test("automatic merge adopts server changes and preserves notes typed during the
   changeNotes(entry, "submitted notes")
 
   fireEvent.submit(entry.container.querySelector("form"))
-  await waitForPuts(puts, 2)
-  assert.equal(puts[1].etag, "e2")
-  assert.equal(puts[1].state.status, "approved", "the automatic merge saves the server-only change")
+  await waitForPuts(puts, 1)
+  assert.equal(button(entry, "Confirm").disabled, false)
+  assert.equal(puts.length, 1, "the stale recovery does not auto-save a merged candidate")
 
   changeNotes(entry, "newer notes")
+  await confirmReview(entry)
+  await waitForPuts(puts, 2)
+  assert.equal(puts[1].etag, "e2")
+  assert.equal(puts[1].state.status, "approved", "the reviewed candidate keeps the server-only change")
+  assert.equal(puts[1].state.notes, "newer notes", "candidate edits are included after preparation")
+  assert.equal(notesInput(entry).disabled, true, "the candidate cannot change after confirmation starts")
   finishAutomaticSave(loaded(puts[1].state, "e3"))
   await waitFor(() => assert.equal(button(entry, "Save").disabled, false))
   assert.equal(notesInput(entry).value, "newer notes")
 
+  changeNotes(entry, "latest notes")
   await submit(entry)
   await waitForPuts(puts, 3)
   assert.equal(puts[2].etag, "e3", "the next save uses the automatically saved ETag")
   assert.equal(puts[2].state.status, "approved", "the next save retains the server change")
-  assert.equal(puts[2].state.notes, "newer notes", "the next save retains newer typing")
+  assert.equal(puts[2].state.notes, "latest notes", "the next save retains newer typing")
 })
 
 test("switching record IDs starts a fresh draft and ETag session", async () => {
@@ -285,7 +477,7 @@ test("switching record IDs starts a fresh draft and ETag session", async () => {
   assert.equal(puts[0].etag, "two-etag")
 })
 
-test("applying choices awaits the save, refreshes editor state, and updates cache", async () => {
+test("applying choices prepares a candidate; explicit confirmation saves and updates cache", async () => {
   const initial = loaded(order({ notes: "original" }), "e1")
   const latest = loaded(order({ notes: "server" }), "e2")
   const fetchQueue = [initial, latest]
@@ -305,14 +497,20 @@ test("applying choices awaits the save, refreshes editor state, and updates cach
   changeNotes(entry, "mine")
   await submit(entry)
   await waitFor(() => assert.equal(radioInputs(entry).length, 2))
+  assert.equal(button(entry, "Confirm").disabled, true, "unresolved conflicts cannot be persisted")
+  assert.equal(puts.length, 1)
 
   fireEvent.click(radioInputs(entry)[0])
   assert.equal(radioInputs(entry)[0].checked, true, "Yours is the selected resolution")
   await applyChoices(entry)
+  assert.equal(puts.length, 1, "applying choices does not write")
+  assert.equal(button(entry, "Confirm").disabled, false)
+  assert.match(entry.getByLabelText("Change summary").textContent, /\/notes: chosen-submitted/)
+  await confirmReview(entry)
   await waitForPuts(puts, 2)
   await waitFor(() => assert.equal(entry.container.querySelector("fieldset").disabled, true))
   assert.equal(entry.getByRole("status").textContent, "Saving…")
-  fireEvent.click(button(entry, "Apply choices"))
+  fireEvent.click(button(entry, "Confirm"))
   assert.equal(puts.length, 2, "the pending resolution cannot be submitted twice")
   finishResolution(saved)
   await waitFor(() => assert.deepEqual(entry.client.getQueryData(["order", "one"]), saved))
@@ -346,6 +544,9 @@ test("Theirs keeps the displayed draft aligned while resolution is pending and o
 
   fireEvent.click(radioInputs(entry)[1])
   await applyChoices(entry)
+  assert.equal(puts.length, 1, "applying Theirs prepares a candidate but does not save it")
+  assert.equal(button(entry, "Confirm").disabled, false)
+  await confirmReview(entry)
   await waitForPuts(puts, 2)
   assert.equal(puts[1].etag, "e2")
   assert.equal(puts[1].state.status, "approved", "the resolution starts from the current server state")
@@ -391,7 +592,7 @@ test("reports a network failure without a code as a save error", async () => {
   assert.equal(puts[1].state.notes, "mine")
 })
 
-test("keeps the conflict visible and reports a failed resolved request", async () => {
+test("keeps the reviewed candidate visible and reports a failed confirmed request", async () => {
   const fetchQueue = [loaded(order({ notes: "original" }), "e1"), loaded(order({ notes: "server" }), "e2")]
   let putCount = 0
   const etags = []
@@ -411,14 +612,16 @@ test("keeps the conflict visible and reports a failed resolved request", async (
   await waitFor(() => assert.equal(radioInputs(entry).length, 2))
   fireEvent.click(radioInputs(entry)[1])
   await applyChoices(entry)
+  assert.equal(putCount, 1, "applying choices prepares a review candidate")
+  assert.equal(entry.container.querySelector("fieldset").textContent.includes("Review changes before saving"), true)
+  await confirmReview(entry)
   await waitFor(() => assert.ok(entry.getByRole("alert").textContent))
 
-  assert.ok(entry.getByRole("group", { name: "Someone else changed these fields" }))
-  assert.equal(button(entry, "Apply choices").disabled, false)
-  assert.equal(radioInputs(entry)[1].checked, true, "the selected Theirs choice survives failure")
+  assert.ok(entry.getByRole("group", { name: "Review changes before saving" }))
+  assert.equal(button(entry, "Confirm").disabled, false)
   assert.equal(notesInput(entry).value, "server", "the draft stays aligned with the failed resolution choice")
 
-  await applyChoices(entry)
+  await confirmReview(entry)
   await waitFor(() => assert.equal(putCount, 3))
   assert.deepEqual(etags, ["e1", "e2", "e2"], "the failed resolution keeps its server baseline and ETag")
   await waitFor(() => assert.equal(entry.container.querySelector("fieldset"), null))
@@ -426,6 +629,7 @@ test("keeps the conflict visible and reports a failed resolved request", async (
   await submit(entry)
   await waitFor(() => assert.equal(putCount, 4))
   assert.equal(etags[3], "e3", "the subsequent save uses the successful retry's ETag")
+
 })
 
 test("draft edits after a conflict invalidate old choices and survive a fresh merge", async () => {
@@ -461,8 +665,9 @@ test("draft edits after a conflict invalidate old choices and survive a fresh me
   assert.equal(notesInput(entry).value, "later draft")
   assert.match(entry.container.querySelector("fieldset").textContent, /later draft/)
   assert.match(entry.container.querySelector("fieldset").textContent, /server two/)
-  assert.equal(radioInputs(entry)[0].checked, false, "the new conflict resets to the server choice")
-  assert.equal(radioInputs(entry)[1].checked, true)
+  assert.equal(radioInputs(entry)[0].checked, false, "the new conflict clears old choices")
+  assert.equal(radioInputs(entry)[1].checked, false)
+  assert.equal(button(entry, "Apply choices").disabled, true)
 })
 
 test("a second stale write creates a new conflict and resets the choice set", async () => {
@@ -485,14 +690,20 @@ test("a second stale write creates a new conflict and resets the choice set", as
   await waitFor(() => assert.equal(radioInputs(entry).length, 2))
   fireEvent.click(radioInputs(entry)[0])
   await applyChoices(entry)
+  assert.equal(puts.length, 1, "choice application waits for confirmation")
+  await confirmReview(entry)
   await waitForPuts(puts, 2)
 
   assert.equal(radioInputs(entry).length, 2)
-  assert.equal(radioInputs(entry)[0].checked, false, "a new conflict resets to the server choice")
-  assert.equal(radioInputs(entry)[1].checked, true)
+  assert.equal(radioInputs(entry)[0].checked, false, "a new conflict clears the previous choice")
+  assert.equal(radioInputs(entry)[1].checked, false)
+  assert.equal(button(entry, "Apply choices").disabled, true)
   assert.equal(puts[1].etag, "e2")
 
+  fireEvent.click(radioInputs(entry)[0])
   await applyChoices(entry)
+  assert.equal(puts.length, 2)
+  await confirmReview(entry)
   await waitForPuts(puts, 3)
   await waitFor(() => assert.equal(entry.container.querySelector("fieldset"), null))
   assert.equal(puts[2].etag, "e3")
@@ -520,19 +731,39 @@ test("a changed conflict path cannot inherit the previous path's choice", async 
     submittedState: order({ notes: "mine", status: "paid" }),
     currentServerState: order({ notes: "server", status: "approved" }),
   }
-  const props = (conflict, inputs) => ({
-    pending: { conflicts: [conflict], inputs, etag: "e2" },
+  let choiceIndex = 0
+  const props = (conflict, inputs) => {
+    choiceIndex += 1
+    return {
+    pending: {
+      conflicts: [conflict],
+      inputs,
+      etag: "e2",
+      revision: 1,
+      sessionId: `session-${choiceIndex}`,
+      candidate: inputs.submittedState,
+      terminal: false,
+      validationError: null,
+      report: [],
+    },
     pendingSave: false,
     error: null,
+    candidate: inputs.submittedState,
+    currentRevision: 1,
+    onCandidate: (state) => { choice = state },
+    onCancel: () => {},
     onResolved: async (state) => { choice = state },
-  })
+  }
+  }
   const view = render(React.createElement(ConflictPicker, props(firstConflict, firstInputs)))
   mounted.push({ ...view, client: new QueryClient() })
   fireEvent.click(radioInputs(view)[0])
   view.rerender(React.createElement(ConflictPicker, props(secondConflict, secondInputs)))
 
   assert.equal(radioInputs(view)[0].checked, false)
-  assert.equal(radioInputs(view)[1].checked, true)
+  assert.equal(radioInputs(view)[1].checked, false)
+  assert.equal(button(view, "Apply choices").disabled, true)
+  fireEvent.click(radioInputs(view)[1])
   await applyChoices(view)
   assert.equal(choice.status, "approved", "the old choice must not be transferred to the new path")
 })
