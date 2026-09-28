@@ -2,6 +2,9 @@ export { createRecoveryController } from "./create-recovery-controller.js"
 export type {
   CandidateValidation,
   DraftRevision,
+  NormalizedRecoverInput,
+  NormalizedRecoveryController,
+  NormalizedRecoveryControllerOptions,
   RecoverInput,
   RecoveryAttempt,
   RecoveryContext,
