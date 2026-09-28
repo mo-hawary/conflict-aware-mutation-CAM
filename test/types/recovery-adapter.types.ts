@@ -30,6 +30,8 @@ const options: RecoveryControllerOptions<State, string, State, string, Latest> =
     version: expectedVersion,
   }),
   isCurrent: () => true,
+  groups: [{ id: "title", paths: [["title"]] }],
+  undefinedObjectProperties: "omit",
 }
 
 const controller = createRecoveryController<State, string, State, string, Latest>(options)
@@ -38,8 +40,8 @@ const pending = controller.recover({
   sessionId: "session-1",
   draftRevision: 0,
   expectedVersion: '"v1"',
-  originalState: { title: "original" },
-  submittedState: { title: "local" },
+  originalState: { title: "original", caption: undefined },
+  submittedState: { title: "local", caption: undefined },
 })
 
 async function consumeOutcome(): Promise<void> {
@@ -52,6 +54,9 @@ async function consumeOutcome(): Promise<void> {
     await controller.reviseCandidate(token, { title: "edited" }, 1)
   } else if (outcome.kind === "conflicts") {
     await controller.reviseCandidate(outcome.handle, { title: "chosen" }, 1)
+  } else if (outcome.kind === "changed-again") {
+    outcome.currentServerState.title satisfies string
+    outcome.latestVersion satisfies string
   }
 }
 
