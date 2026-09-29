@@ -1,6 +1,10 @@
 import { matchConflictError } from "./match-conflict-error.js"
 import { mergeStates } from "./merge-states.js"
 import type {
+  AdvancedMergeResult,
+  AdvancedMergeStatesInput,
+  AdvancedResolveConflictResult,
+  NormalizedAdvancedMergeStatesInput,
   GroupedMergeResult,
   GroupedMergeResultWithReport,
   JsonValue,
@@ -61,8 +65,22 @@ export function resolveConflict(
   input: NormalizedResolveConflictInput,
 ): ResolveRuntimeResult<JsonValue>
 export function resolveConflict<T extends JsonValue>(
-  input: ResolveConflictInput<T> | (MatchConflictErrorInput & NormalizedMergeStatesWithOptionsInput),
-): ResolveRuntimeResult<T> | ResolveRuntimeResult<JsonValue> {
+  input: MatchConflictErrorInput & AdvancedMergeStatesInput<T>,
+): AdvancedResolveConflictResult<T>
+export function resolveConflict(
+  input: MatchConflictErrorInput & NormalizedAdvancedMergeStatesInput,
+): AdvancedResolveConflictResult<JsonValue>
+export function resolveConflict<T extends JsonValue>(
+  input:
+    | ResolveConflictInput<T>
+    | (MatchConflictErrorInput & NormalizedMergeStatesWithOptionsInput)
+    | (MatchConflictErrorInput & AdvancedMergeStatesInput<T>)
+    | (MatchConflictErrorInput & NormalizedAdvancedMergeStatesInput),
+):
+  | ResolveRuntimeResult<T>
+  | ResolveRuntimeResult<JsonValue>
+  | AdvancedResolveConflictResult<T>
+  | AdvancedResolveConflictResult<JsonValue> {
   const match = matchConflictError(input)
   if (!match.matched) return match
 
@@ -75,6 +93,7 @@ export function resolveConflict<T extends JsonValue>(
     | GroupedMergeResult<JsonValue>
     | MergeResultWithReport<JsonValue>
     | GroupedMergeResultWithReport<JsonValue>
+    | AdvancedMergeResult<T>
 
-  return { matched: true, result: merged } as ResolveRuntimeResult<T> | ResolveRuntimeResult<JsonValue>
+  return { matched: true, result: merged } as ResolveRuntimeResult<T> | AdvancedResolveConflictResult<T>
 }

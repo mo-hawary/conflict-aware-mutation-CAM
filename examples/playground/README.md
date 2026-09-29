@@ -1,6 +1,6 @@
 # CAM browser playground
 
-Edit the original, submitted, and current server JSON snapshots and inspect the merge result. Arrays are atomic; objects merge recursively.
+Edit the original, submitted, and current server JSON snapshots and inspect the merge result. The playground uses the default options: arrays are atomic and objects merge recursively. Array modes, groups, derived paths, rules, and review are shown in [`collections-and-rules.mjs`](../collections-and-rules.mjs).
 
 From the repository root:
 

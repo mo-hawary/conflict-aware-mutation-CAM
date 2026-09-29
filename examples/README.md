@@ -4,6 +4,7 @@
 | --- | --- | --- |
 | [`fetch-rest.mjs`](./fetch-rest.mjs) | Review-first stale-write recovery against a local ETag-guarded REST server: match the error, check terminal state, merge, validate, resolve exact conflicts, and confirm with the latest ETag | Yes (`npm run examples`) |
 | [`versioned-rest-recovery.mjs`](./versioned-rest-recovery.mjs) | Recovery controller with an explicit integer version and HTTP 409; only explicit confirmation writes with the fetched version | Yes (`npm run examples`) |
+| [`collections-and-rules.mjs`](./collections-and-rules.mjs) | One order record with keyed lines, a tag set, diff3 steps, per-line price groups, derived totals, rule blame and rule conflicts, staged decisions, and `review-mixed` | Yes (`npm run examples`) |
 | [`choose-sides.mjs`](./choose-sides.mjs) | Applying session-bound "yours / theirs" decisions to current conflicts while keeping every non-conflicting change | Yes, through `fetch-rest.mjs`; typed by `choose-sides.d.mts` |
 | [`playground/`](./playground) | Browser playground: edit three JSON states and see the `mergeStates()` result. | Built by CI with Vite; see its [dependency update notes](./playground/README.md) |
 | [`react/tanstack-query-react.tsx`](./react/tanstack-query-react.tsx) | Review-first TanStack Query recovery with candidate validation, terminal checks, session-bound choices, explicit confirmation, and ETag retention | Type-checked and behavior-tested in CI |

@@ -1,7 +1,15 @@
 import { CAMConfigError } from "../errors.js"
 import { matchConflictError } from "../match-conflict-error.js"
-import { mergeStates, snapshotPathGroups } from "../merge-states.js"
-import type { ErrorSignal, JsonValue, PathGroup } from "../types.js"
+import { mergeStates, snapshotMergeStates, snapshotPathGroups } from "../merge-states.js"
+import type {
+  ArrayMergeOptions,
+  AutoMergePolicy,
+  ErrorSignal,
+  JsonValue,
+  MergeRule,
+  PathGroup,
+  PathPattern,
+} from "../types.js"
 import { snapshotJsonValue } from "../validation.js"
 import type {
   CandidateValidation,
@@ -121,6 +129,10 @@ export function createRecoveryController<
     isCurrent,
     autoRetry,
     groups,
+    arrays,
+    derived,
+    rules,
+    autoMerge,
     undefinedObjectProperties,
   } = config
   const expectedErrorSnapshot = snapshotErrorSignal(expectedError)
@@ -628,11 +640,30 @@ export function createRecoveryController<
         submittedState: session.submittedState as JsonValue,
         currentServerState: currentServerState as JsonValue,
         ...(groups === undefined ? {} : { groups }),
+        ...(arrays === undefined ? {} : { arrays }),
+        ...(derived === undefined ? {} : { derived }),
+        ...(rules === undefined ? {} : { rules }),
+        ...(autoMerge === undefined ? {} : { autoMerge }),
       } as never)
     } catch (cause) {
       if (cause instanceof CAMConfigError) throw cause
       return { kind: "failed", stage: "merge", cause }
     }
+    const mergeResult = merged as { ok: boolean; kind?: string; value?: JsonValue; conflicts: never[]; violations?: never[] }
+    if (!mergeResult.ok && mergeResult.kind === "invalid") {
+      const handle = makeCapability(session, "conflict", undefined)
+      return {
+        kind: "invalid",
+        sessionId: session.sessionId,
+        violations: mergeResult.violations!,
+        conflicts: mergeResult.conflicts,
+        currentServerState,
+        latestVersion,
+        handle: handle as RecoverySessionHandle,
+      }
+    }
+    const needsReview = !mergeResult.ok && mergeResult.kind === "review"
+    if (needsReview) merged = { ok: true, value: mergeResult.value!, conflicts: [] } as never
     if (!merged.ok) {
       const handle = makeCapability(session, "conflict", undefined)
       return {
@@ -649,7 +680,7 @@ export function createRecoveryController<
     if (!prepared.ok) return prepared.outcome
     session.candidate = prepared.value
 
-    if (autoRetry === "once") {
+    if (autoRetry === "once" && !needsReview) {
       const write = await writeCandidate(session, prepared.value, "recovery")
       if (write.kind === "stopped") return write.outcome
       if (write.kind === "failed") {
@@ -713,6 +744,42 @@ function validateOptions<
     : deepFreeze(
         snapshotPathGroups(rawGroups) as unknown as JsonValue,
       ) as unknown as readonly PathGroup[]
+  const arrays = readOptionalOwnData<ArrayMergeOptions>(options, "arrays", "arrays")
+  const derived = readOptionalOwnData<readonly PathPattern[]>(options, "derived", "derived")
+  const rawRules = readOptionalOwnData<readonly MergeRule[]>(options, "rules", "rules")
+  const autoMerge = readOptionalOwnData<AutoMergePolicy>(options, "autoMerge", "autoMerge")
+  // Validate merge-policy options once, eagerly, with a throwaway merge input.
+  snapshotMergeStates({
+    originalState: null,
+    submittedState: null,
+    currentServerState: null,
+    ...(arrays === undefined ? {} : { arrays }),
+    ...(derived === undefined ? {} : { derived }),
+    ...(rawRules === undefined ? {} : { rules: rawRules }),
+    ...(autoMerge === undefined ? {} : { autoMerge }),
+  } as never)
+  const frozenArrays = arrays === undefined
+    ? undefined
+    : deepFreeze(snapshotJsonValue(arrays, "arrays")) as unknown as ArrayMergeOptions
+  const frozenDerived = derived === undefined
+    ? undefined
+    : deepFreeze(snapshotJsonValue(derived, "derived")) as unknown as readonly PathPattern[]
+  // Deep-snapshot rule data so later caller mutations cannot change the
+  // policy; custom rules keep only their check function by reference.
+  const frozenRules = rawRules === undefined
+    ? undefined
+    : Object.freeze(rawRules.map((rule, index): MergeRule => {
+        const label = `rules[${index}]`
+        if (Object.getOwnPropertyDescriptor(rule, "check") !== undefined) {
+          const custom = rule as { id: string; paths: unknown; check: MergeRule extends infer R ? R extends { check: infer C } ? C : never : never }
+          return Object.freeze({
+            id: custom.id,
+            paths: deepFreeze(snapshotJsonValue(custom.paths, `${label}.paths`)),
+            check: custom.check,
+          }) as unknown as MergeRule
+        }
+        return deepFreeze(snapshotJsonValue(rule, label)) as unknown as MergeRule
+      })) as readonly MergeRule[]
   const config = {
     expectedError: readOwnData<RecoveryControllerInternalOptions<S, V, T, E, L>["expectedError"]>(options, "expectedError", "expectedError"),
     errorSignalFrom: readOwnData<RecoveryControllerInternalOptions<S, V, T, E, L>["errorSignalFrom"]>(options, "errorSignalFrom", "errorSignalFrom"),
@@ -726,6 +793,10 @@ function validateOptions<
     isCurrent: readOwnData<RecoveryControllerInternalOptions<S, V, T, E, L>["isCurrent"]>(options, "isCurrent", "isCurrent"),
     ...(autoRetry === undefined ? {} : { autoRetry }),
     ...(groups === undefined ? {} : { groups }),
+    ...(frozenArrays === undefined ? {} : { arrays: frozenArrays }),
+    ...(frozenDerived === undefined ? {} : { derived: frozenDerived }),
+    ...(frozenRules === undefined ? {} : { rules: frozenRules }),
+    ...(autoMerge === undefined ? {} : { autoMerge }),
     ...(undefinedObjectProperties === undefined ? {} : { undefinedObjectProperties }),
   } as RecoveryControllerInternalOptions<S, V, T, E, L>
   const functionNames = [

@@ -107,7 +107,9 @@ import * as cam from "conflict-aware-mutation"
 import * as recovery from "conflict-aware-mutation/recovery"
 
 assert.deepEqual(Object.keys(cam).sort(), [
+  "ANY",
   "CAMConfigError",
+  "EACH",
   "applyConflictDecisions",
   "formatConflictPath",
   "matchConflictError",
@@ -200,6 +202,35 @@ assert.deepEqual(
   writeFileSync(path.join(consumerDir, "runtime.mjs"), runtimeTest)
   run("node", ["runtime.mjs"], { cwd: consumerDir })
 
+  // CommonJS consumers load the ESM entries through require(esm) (Node 22.12+).
+  const requireTest = `
+const assert = require("node:assert/strict")
+const cam = require("conflict-aware-mutation")
+const recovery = require("conflict-aware-mutation/recovery")
+
+assert.deepEqual(Object.keys(cam).sort(), [
+  "ANY",
+  "CAMConfigError",
+  "EACH",
+  "applyConflictDecisions",
+  "formatConflictPath",
+  "matchConflictError",
+  "mergeStates",
+  "resolveConflict",
+])
+assert.deepEqual(Object.keys(recovery).sort(), ["createRecoveryController"])
+assert.deepEqual(
+  cam.mergeStates({ originalState: { a: 1 }, submittedState: { a: 2 }, currentServerState: { a: 1 } }),
+  { ok: true, value: { a: 2 }, conflicts: [] },
+)
+
+import("conflict-aware-mutation").then((esm) => {
+  assert.equal(esm.CAMConfigError, cam.CAMConfigError, "require and import must share one module instance")
+})
+`
+  writeFileSync(path.join(consumerDir, "require.cjs"), requireTest)
+  run("node", ["require.cjs"], { cwd: consumerDir })
+
   const typeConsumer = `
 import { CAMConfigError, applyConflictDecisions, formatConflictPath, matchConflictError, mergeStates, resolveConflict } from "conflict-aware-mutation"
 import type { ErrorSignal, JsonValue, MergeResult, PathGroup } from "conflict-aware-mutation"
@@ -242,6 +273,19 @@ void outcome
 void controller
 `
   writeFileSync(path.join(consumerDir, "consumer.ts"), typeConsumer)
+  const commonJsTypeConsumer = `
+import cam = require("conflict-aware-mutation")
+import recovery = require("conflict-aware-mutation/recovery")
+
+const result: cam.MergeResult<{ name: string }> = cam.mergeStates({
+  originalState: { name: "A" },
+  submittedState: { name: "B" },
+  currentServerState: { name: "A" },
+})
+void result
+void recovery.createRecoveryController
+`
+  writeFileSync(path.join(consumerDir, "consumer-commonjs.cts"), commonJsTypeConsumer)
   writeFileSync(
     path.join(consumerDir, "tsconfig.json"),
     JSON.stringify(
@@ -254,7 +298,7 @@ void controller
           noEmit: true,
           skipLibCheck: false,
         },
-        include: ["consumer.ts"],
+        include: ["consumer.ts", "consumer-commonjs.cts"],
       },
       null,
       2,

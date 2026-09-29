@@ -20,6 +20,9 @@ The core has no runtime dependencies. Keep React, networking, UI, and backend po
 | Location | Purpose |
 | --- | --- |
 | `src/merge-states.ts` | Three-way merge and conflict paths |
+| `src/merge-arrays.ts` | Keyed, sequence (diff3), set, and multiset array strategies |
+| `src/paths.ts` | Path segments, `ANY`/`EACH` patterns, and pattern expansion |
+| `src/rules.ts` | Built-in and custom rule compilation |
 | `src/validation.ts` | JSON snapshots and error-signal validation |
 | `src/types.ts` | Public input/result types |
 | `test/` | Unit, property, fuzz, package/release and runtime checks |

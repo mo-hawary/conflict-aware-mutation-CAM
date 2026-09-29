@@ -16,11 +16,13 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     },
     "./recovery": {
       "types": "./dist/recovery/index.d.ts",
-      "import": "./dist/recovery/index.js"
+      "import": "./dist/recovery/index.js",
+      "default": "./dist/recovery/index.js"
     }
   },
   "files": [
@@ -40,7 +42,7 @@
     "test:coverage": "npm run build && node --test --experimental-test-coverage --test-coverage-include='dist/**' --test-coverage-exclude='dist/recovery/**' --test-coverage-lines=95 --test-coverage-branches=95 --test-coverage-functions=95 test/*.test.mjs && node --test --experimental-test-coverage --test-coverage-include='dist/recovery/**' --test-coverage-lines=93 --test-coverage-branches=90 --test-coverage-functions=100 test/recovery.test.mjs",
     "lint:package": "npm run build && publint --strict && attw --pack . --profile esm-only",
     "size": "npm run build && size-limit",
-    "examples": "npm run build && node examples/fetch-rest.mjs && node examples/versioned-rest-recovery.mjs",
+    "examples": "npm run build && node examples/fetch-rest.mjs && node examples/versioned-rest-recovery.mjs && node examples/collections-and-rules.mjs",
     "bench": "npm run build && node --expose-gc bench/merge.bench.mjs",
     "mutation": "stryker run"
   },
