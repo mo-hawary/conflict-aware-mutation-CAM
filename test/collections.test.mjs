@@ -399,7 +399,8 @@ test("set reports identical changes on both sides", () => {
     arrays: { rules: [{ path: ["t"], mode: "set" }] },
     includeReport: true,
   })
-  assert.deepEqual(result.report.changes.map(({ provenance }) => provenance), ["combined"])
+  // Same membership on both sides; only the order differs, which is not a change.
+  assert.deepEqual(result.report.changes.map(({ provenance }) => provenance), ["identical-both"])
   const identical = mergeStates({
     originalState: { t: [1] },
     submittedState: { t: [1, 2] },
@@ -574,11 +575,14 @@ for (const [name, arbitrary, mode] of [
     const arrays = { rules: [mode === "keyed" ? { path: ["x"], mode, key: "id" } : { path: ["x"], mode }] }
     fc.assert(
       fc.property(arbitrary, arbitrary, (original, edited) => {
+        // Sets and multisets are unordered: compare them by contents.
+        const unordered = mode === "set" || mode === "multiset"
+        const view = (list) => (unordered ? [...list].map((v) => JSON.stringify(v)).sort() : list)
         const run = (submittedState, currentServerState) =>
-          mergeStates({ originalState: { x: original }, submittedState: { x: submittedState }, currentServerState: { x: currentServerState }, arrays })
-        assert.deepEqual(run(edited, original).value, { x: edited })
-        assert.deepEqual(run(original, edited).value, { x: edited })
-        assert.deepEqual(run(edited, edited).value, { x: edited })
+          view(mergeStates({ originalState: { x: original }, submittedState: { x: submittedState }, currentServerState: { x: currentServerState }, arrays }).value.x)
+        assert.deepEqual(run(edited, original), view(edited))
+        assert.deepEqual(run(original, edited), view(edited))
+        assert.deepEqual(run(edited, edited), view(edited))
       }),
     )
   })
@@ -776,16 +780,71 @@ test("review-mixed only auto-accepts results that one side wrote, across every a
       items: fc.uniqueArray(fc.record({ id: fc.constantFrom("p", "q", "r"), v: fc.constantFrom(0, 1) }), { selector: (r) => r.id, maxLength: 3 }),
       steps: fc.array(fc.constantFrom("s1", "s2", "s3"), { maxLength: 4 }),
       tags: fc.uniqueArray(fc.constantFrom("t1", "t2", "t3")),
+      votes: fc.array(fc.constantFrom(1, 2), { maxLength: 4 }),
     })
     .map((value) => JSON.parse(JSON.stringify(value)))
-  const arrays = { default: "sequence", rules: [{ path: ["items"], mode: "keyed", key: "id" }, { path: ["tags"], mode: "set" }] }
-  const canonical = (state) => JSON.stringify(mergeStates({ originalState: state, submittedState: state, currentServerState: state, arrays }).value)
+  const arrays = {
+    default: "sequence",
+    rules: [{ path: ["items"], mode: "keyed", key: "id" }, { path: ["tags"], mode: "set" }, { path: ["votes"], mode: "multiset" }],
+  }
+  // Sets and multisets are unordered: compare them by contents.
+  const normalize = (value) => JSON.stringify({ ...value, tags: [...value.tags].sort(), votes: [...value.votes].sort() })
+  const canonical = (state) =>
+    normalize(mergeStates({ originalState: state, submittedState: state, currentServerState: state, arrays }).value)
   fc.assert(
     fc.property(record, record, record, (original, submitted, server) => {
       const result = mergeStates({ originalState: original, submittedState: submitted, currentServerState: server, arrays, autoMerge: "review-mixed" })
       if (!result.ok) return
-      const value = JSON.stringify(result.value)
+      const value = normalize(result.value)
       assert.ok(value === canonical(submitted) || value === canonical(server), `mixed result auto-accepted: ${value}`)
+    }),
+    { numRuns: 1000 },
+  )
+})
+
+test("set and multiset order-only changes are not changes", () => {
+  const arrays = { rules: [{ path: ["tags"], mode: "set" }, { path: ["votes"], mode: "multiset" }] }
+  const input = {
+    originalState: { tags: ["a", "b"], votes: [1, 1, 2], title: "old" },
+    submittedState: { tags: ["b", "a"], votes: [2, 1, 1], title: "old" },
+    currentServerState: { tags: ["a", "b"], votes: [1, 1, 2], title: "new" },
+    arrays,
+  }
+  // The result is exactly what the server wrote, so it needs no review.
+  assert.deepEqual(mergeStates({ ...input, autoMerge: "review-mixed" }), {
+    ok: true,
+    value: { tags: ["a", "b"], title: "new", votes: [1, 1, 2] },
+    conflicts: [],
+  })
+  const report = mergeStates({ ...input, includeReport: true }).report.changes
+  assert.deepEqual(report.map(({ path, provenance }) => [path, provenance]), [[["title"], "server-only"]])
+  // Order-only on both sides, and order-only against a real membership change.
+  assert.deepEqual(
+    mergeStates({ ...input, currentServerState: { tags: ["b", "a", "c"], votes: [1, 2, 1, 2], title: "old" }, autoMerge: "review-mixed" }),
+    { ok: true, value: { tags: ["b", "a", "c"], title: "old", votes: [1, 2, 1, 2] }, conflicts: [] },
+  )
+})
+
+test("an order-only set or multiset change never sends a one-sided result to review", () => {
+  const arrays = { rules: [{ path: ["tags"], mode: "set" }, { path: ["votes"], mode: "multiset" }] }
+  const base = fc
+    .record({
+      title: fc.constantFrom("a", "b"),
+      tags: fc.uniqueArray(fc.constantFrom("t1", "t2", "t3", "t4")),
+      votes: fc.array(fc.constantFrom(1, 2, 3), { maxLength: 5 }),
+    })
+    .map((value) => JSON.parse(JSON.stringify(value)))
+  const view = (value) => ({ title: value.title, tags: [...value.tags].sort(), votes: [...value.votes].sort() })
+  fc.assert(
+    fc.property(base, fc.nat(20), fc.boolean(), (original, seed, flip) => {
+      const shuffle = (list) =>
+        list.map((value, index) => [((index + 1) * (seed + 7)) % 13, value]).sort((a, b) => a[0] - b[0]).map(([, value]) => value)
+      const reordered = { ...original, tags: shuffle(original.tags), votes: shuffle(original.votes) }
+      const edited = { ...original, title: original.title === "a" ? "b" : "a" }
+      const [submittedState, currentServerState] = flip ? [reordered, edited] : [edited, reordered]
+      const result = mergeStates({ originalState: original, submittedState, currentServerState, arrays, autoMerge: "review-mixed" })
+      assert.equal(result.ok, true)
+      assert.deepEqual(view(result.value), view(edited))
     }),
     { numRuns: 1000 },
   )

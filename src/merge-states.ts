@@ -765,7 +765,12 @@ function mergeArrayNode(
   const forcedBeneath = encodedPath !== undefined && context.forcedPrefixes.has(encodedPath)
   // One-sided and identical changes need no item-level work, unless a forced
   // selection (group or rule decision) targets something inside the array.
+  // Sets and multisets never take this shortcut: raw array equality would
+  // treat an order-only change as a real one, but their meaning is membership
+  // (or counts), which only the counted merge compares.
+  const counted = rule.mode === "set" || rule.mode === "multiset"
   if (
+    !counted &&
     !forcedBeneath &&
     (slotEqual(submitted, original) ||
       slotEqual(currentServer, original) ||

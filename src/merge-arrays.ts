@@ -1,5 +1,5 @@
 import { CAMConfigError } from "./errors.js"
-import { ABSENT, canonicalKey, isPlainObject, jsonEqual } from "./slots.js"
+import { ABSENT, canonicalKey, isPlainObject } from "./slots.js"
 import type { Slot } from "./slots.js"
 import type {
   ConflictChoice,
@@ -523,17 +523,24 @@ export function assertUnique(values: readonly JsonValue[], side: string, label: 
   }
 }
 
+function sameCounts(left: ReadonlyMap<string, number>, right: ReadonlyMap<string, number>): boolean {
+  if (left.size !== right.size) return false
+  for (const [identity, count] of left) if (right.get(identity) !== count) return false
+  return true
+}
+
+/** Provenance by membership (sets) or counts (multisets); array order is not a change. */
 function collectionProvenance(
-  original: readonly JsonValue[],
-  submitted: readonly JsonValue[],
-  currentServer: readonly JsonValue[],
+  original: ReadonlyMap<string, number>,
+  submitted: ReadonlyMap<string, number>,
+  currentServer: ReadonlyMap<string, number>,
 ): ExtendedChangeProvenance | undefined {
-  const submittedChanged = !jsonEqual(submitted as JsonValue, original as JsonValue)
-  const serverChanged = !jsonEqual(currentServer as JsonValue, original as JsonValue)
+  const submittedChanged = !sameCounts(submitted, original)
+  const serverChanged = !sameCounts(currentServer, original)
   if (!submittedChanged && !serverChanged) return undefined
   if (!serverChanged) return "submitted-only"
   if (!submittedChanged) return "server-only"
-  return jsonEqual(submitted as JsonValue, currentServer as JsonValue) ? "identical-both" : "combined"
+  return sameCounts(submitted, currentServer) ? "identical-both" : "combined"
 }
 
 /**
@@ -557,6 +564,16 @@ export function mergeCounted(
   const o = counts(original)
   const s = counts(submitted)
   const c = counts(currentServer)
+  // Order is not a change. When at most one side changed membership (or
+  // counts), keep that side's array exactly as written.
+  const provenance = collectionProvenance(o, s, c)
+  if (provenance !== "combined") {
+    const kept = provenance === "submitted-only" ? submitted : currentServer
+    if (provenance !== undefined) {
+      hooks.change(undefined, original as JsonValue, submitted as JsonValue, currentServer as JsonValue, kept as JsonValue, provenance)
+    }
+    return kept as JsonValue
+  }
   const budget = new Map<string, number>()
   for (const identity of new Set([...o.keys(), ...s.keys(), ...c.keys()])) {
     const count = Math.max(0, (s.get(identity) ?? 0) + (c.get(identity) ?? 0) - (o.get(identity) ?? 0))
@@ -574,7 +591,6 @@ export function mergeCounted(
       }
     }
   }
-  const provenance = collectionProvenance(original, submitted, currentServer)
-  if (provenance !== undefined) hooks.change(undefined, original as JsonValue, submitted as JsonValue, currentServer as JsonValue, result, provenance)
+  hooks.change(undefined, original as JsonValue, submitted as JsonValue, currentServer as JsonValue, result, "combined")
   return result
 }
