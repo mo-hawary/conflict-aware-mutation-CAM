@@ -36,13 +36,30 @@ export function runSmoke(cam) {
   }
 
   check("exports", () => equal(Object.keys(cam).sort(), [
+    "ANY",
     "CAMConfigError",
+    "EACH",
     "applyConflictDecisions",
     "formatConflictPath",
     "matchConflictError",
     "mergeStates",
     "resolveConflict",
   ]))
+
+  check("keyed array, set and rule merge", () => {
+    const merged = cam.mergeStates({
+      originalState: { items: [{ id: "a", q: 1 }], tags: ["x"] },
+      submittedState: { items: [{ id: "a", q: 2 }], tags: ["x", "y"] },
+      currentServerState: { items: [{ id: "a", q: 1 }, { id: "b", q: 1 }], tags: ["z"] },
+      arrays: { rules: [{ path: ["items"], mode: "keyed", key: "id" }, { path: ["tags"], mode: "set" }] },
+      rules: [{ id: "q", path: ["items", cam.ANY, "q"], max: 5 }],
+    })
+    equal(merged, {
+      ok: true,
+      value: { items: [{ id: "a", q: 2 }, { id: "b", q: 1 }], tags: ["z", "y"] },
+      conflicts: [],
+    })
+  })
 
   check("clean nested merge", () =>
     equal(

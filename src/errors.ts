@@ -6,8 +6,8 @@
 export class CAMConfigError extends Error {
   readonly code = "CAM_CONFIG_ERROR"
 
-  constructor(message: string) {
-    super(message)
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options)
     this.name = "CAMConfigError"
   }
 }

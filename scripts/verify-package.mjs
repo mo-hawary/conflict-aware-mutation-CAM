@@ -107,7 +107,9 @@ import * as cam from "conflict-aware-mutation"
 import * as recovery from "conflict-aware-mutation/recovery"
 
 assert.deepEqual(Object.keys(cam).sort(), [
+  "ANY",
   "CAMConfigError",
+  "EACH",
   "applyConflictDecisions",
   "formatConflictPath",
   "matchConflictError",
@@ -207,7 +209,9 @@ const cam = require("conflict-aware-mutation")
 const recovery = require("conflict-aware-mutation/recovery")
 
 assert.deepEqual(Object.keys(cam).sort(), [
+  "ANY",
   "CAMConfigError",
+  "EACH",
   "applyConflictDecisions",
   "formatConflictPath",
   "matchConflictError",

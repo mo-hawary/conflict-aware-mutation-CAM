@@ -1,9 +1,16 @@
 import type {
+  AdvancedMergeConflict,
+  ArrayMergeOptions,
+  AutoMergePolicy,
   ErrorSignal,
   JsonValue,
   JsonValueWithUndefinedObjectProperties,
   MergeConflict,
+  MergeRule,
   PathGroup,
+  PathPattern,
+  PatternPathGroup,
+  RuleViolation,
 } from "../types.js"
 
 export type RecoveryVersion = string | number
@@ -85,7 +92,18 @@ export type RecoveryOutcome<
   | {
       readonly kind: "conflicts"
       readonly sessionId: string
-      readonly conflicts: MergeConflict[]
+      /** Includes item, range, order and rule conflicts when those options are set. */
+      readonly conflicts: (MergeConflict | AdvancedMergeConflict)[]
+      readonly currentServerState: S
+      readonly latestVersion: V
+      readonly handle: RecoverySessionHandle
+    }
+  | {
+      /** A configured rule is broken by the submitted or latest server state. */
+      readonly kind: "invalid"
+      readonly sessionId: string
+      readonly violations: RuleViolation[]
+      readonly conflicts: (MergeConflict | AdvancedMergeConflict)[]
       readonly currentServerState: S
       readonly latestVersion: V
       readonly handle: RecoverySessionHandle
@@ -171,8 +189,19 @@ type RecoveryControllerBaseOptions<
   readonly isCurrent: (identity: RecoveryIdentity<E>) => boolean
   /** Omission means review-first. "once" allows one automatic recovery write. */
   readonly autoRetry?: "once"
-  /** Coupled object-property paths forwarded to the recovery merge. */
-  readonly groups?: readonly PathGroup[]
+  /** Coupled paths (optionally with ANY/EACH patterns) forwarded to the recovery merge. */
+  readonly groups?: readonly (PathGroup | PatternPathGroup)[]
+  /** Array merge modes forwarded to the recovery merge. */
+  readonly arrays?: ArrayMergeOptions
+  /** Computed paths excluded from merging; recompute them in prepareCandidate. */
+  readonly derived?: readonly PathPattern[]
+  /** Rules checked against both inputs and the merged candidate. */
+  readonly rules?: readonly MergeRule[]
+  /**
+   * "review-mixed" never auto-writes a candidate that combines both sides'
+   * changes, even with autoRetry: "once".
+   */
+  readonly autoMerge?: AutoMergePolicy
 }
 
 /**

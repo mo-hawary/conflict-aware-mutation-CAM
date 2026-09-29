@@ -1,5 +1,7 @@
 # Phase 7: Array-by-ID evaluation
 
+> **Superseded.** Keyed array merging now ships as the opt-in `arrays` rule `mode: "keyed"`, together with pattern groups (`ANY`/`EACH`), derived paths, and rules. Those answer the objection recorded below: the variant/media case is handled by declaring the coupling (a group or a rule), not by ID matching alone. See [the collections design](../docs/collections-design.md). The prototype below is kept for reference.
+
 ## Decision
 
 **No-go for adding identity-aware array merging to the shipped CAM API in this roadmap pass.** Keep `mergeStates()` arrays atomic. The prototype demonstrates a real capability gap for sparse edits to separate records in the same array, but the cited ALORA variant/media case is a cross-field domain invariant. ID matching does not know which media must follow a default-variant change, so it cannot resolve that case safely. Existing ID-keyed object records and coupled-path groups address those needs with less new merge policy.

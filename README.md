@@ -105,7 +105,7 @@ For each path, one-sided changes are kept, identical changes agree, and differen
 | --- | --- |
 | Strings, finite numbers, booleans, `null` | Atomic values |
 | Nested plain objects; records keyed by IDs | Recursive field-level merging |
-| Arrays, including arrays of objects | Accepted but atomic: different edits conflict at the array path |
+| Arrays, including arrays of objects | Atomic by default. Opt in per path to [keyed, sequence (diff3), set, or multiset merging](#array-merging) |
 | Missing object property | Deletion; distinct from explicit `null` |
 | Null-prototype objects | Accepted; outputs use `Object.prototype` |
 | Shared non-cyclic references | Copied independently; outputs do not alias inputs |
@@ -118,13 +118,13 @@ For each path, one-sided changes are kept, identical changes agree, and differen
 
 Depth starts at the root value (0). Each object property or array index adds one level; values at depth 512 are valid, and values at depth 513 are rejected. Empty containers and scalar leaves follow the same boundary.
 
-An `id` inside an array does not enable element-level merging. ID-keyed **objects** use ordinary object-key recursion. See [nested object and array examples](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/docs/data-model.md) for the distinction.
+By default an `id` inside an array does not enable element-level merging; configure an [array rule](#array-merging) for that. ID-keyed **objects** always use ordinary object-key recursion. See [nested object and array examples](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/docs/data-model.md) for the distinction.
 
 CAM validates into private snapshots and merges those snapshots. Results are deterministic, inputs remain unchanged, and `-0` becomes `0`. Conflict paths are lexicographically ordered; JavaScript's integer-key enumeration rules still apply to output objects.
 
 ## API
 
-The root entry exports `mergeStates`, `matchConflictError`, `resolveConflict`, `applyConflictDecisions`, `formatConflictPath`, and `CAMConfigError`. Public TypeScript types are exported alongside them. The recovery adapter has a separate import so the root entry remains independent of recovery code:
+The root entry exports `mergeStates`, `matchConflictError`, `resolveConflict`, `applyConflictDecisions`, `formatConflictPath`, `CAMConfigError`, and the `ANY` and `EACH` path wildcards. Public TypeScript types are exported alongside them. The recovery adapter has a separate import so the root entry remains independent of recovery code:
 
 ```js
 import { createRecoveryController } from "conflict-aware-mutation/recovery"
@@ -136,6 +136,8 @@ import { createRecoveryController } from "conflict-aware-mutation/recovery"
 | --- | --- |
 | `{ ok: true, value, conflicts: [] }` | Structurally merged value |
 | `{ ok: false, kind: "conflict", conflicts }` | Decisions required; no `value` |
+| `{ ok: false, kind: "invalid", violations, conflicts }` | Only with `rules`: an input breaks a rule (see [rules](#user-defined-rules)) |
+| `{ ok: false, kind: "review", value, report }` | Only with `autoMerge: "review-mixed"`: complete, but combines both sides' changes |
 
 Each conflict has a `path` array and two sides, `submitted` and `currentServer`. A side is `{ exists: true, value }` or `{ exists: false }` for deletion. A key containing dots remains a single path segment; a root-level conflict has path `[]`.
 
@@ -169,9 +171,80 @@ For domain values whose fields must be chosen together, pass `groups: [{ id, pat
 
 Pass `includeReport: true` to include optional change provenance on success and conflict results. Unresolved changes have no result slot, and a conflict still has no persistable partial value. `formatConflictPath()` returns an RFC 6901 JSON Pointer for display, including escaped `/` and `~` keys.
 
+### Array merging
+
+Arrays are atomic unless configured. Rules apply per path; `ANY` matches any key or item, and the most specific rule wins:
+
+```js
+import { ANY, mergeStates } from "conflict-aware-mutation"
+
+const result = mergeStates({
+  originalState: { items: [{ id: "a", qty: 1, price: 10 }], tags: ["new"] },
+  submittedState: { items: [{ id: "a", qty: 2, price: 10 }], tags: ["new", "gift"] },
+  currentServerState: { items: [{ id: "a", qty: 1, price: 12 }, { id: "b", qty: 1, price: 5 }], tags: ["sale"] },
+  arrays: {
+    rules: [
+      { path: ["items"], mode: "keyed", key: "id" },
+      { path: ["tags"], mode: "set" },
+    ],
+  },
+})
+// { ok: true, value: { items: [{ id: "a", price: 12, qty: 2 }, { id: "b", price: 5, qty: 1 }], tags: ["sale", "gift"] }, conflicts: [] }
+```
+
+| Mode | For | Behavior |
+| --- | --- | --- |
+| `atomic` (default) | Values that only make sense whole | Different edits on both sides conflict at the array path |
+| `keyed` | Records with a stable ID (`key`) | Items matched by key and merged field by field. Additions and deletions merge; delete versus edit conflicts on the item; different reorders on both sides are one `reason: "order"` conflict. Missing or duplicate keys throw `CAMConfigError` |
+| `sequence` | Ordered lists without identity | diff3, the algorithm behind git merges: unchanged regions are kept, a region changed on one side takes that side, and only regions both sides changed differently conflict. Same-shape regions are merged element by element |
+| `set` | Unique values (tags, roles) | Membership merges; never conflicts |
+| `multiset` | Values that may repeat | Each value's count becomes `submitted + currentServer - original`; never conflicts |
+
+`arrays: { default: "sequence" }` applies diff3 to every array without a rule. Conflicts inside arrays use extra path segments: `{ key: "id", value: "a" }` for a keyed item and `{ from, to }` (original indices) for a sequence region. `formatConflictPath()` displays them as `/items/[id=a]/qty` and `/steps/[1..3)`. Adjacent edits in a sequence can conflict even when they do not overlap; that errs toward a conflict, never a wrong merge. Use `keyed` where items have identity.
+
+### Linked fields and derived values
+
+Group paths accept wildcards. `ANY` links every match into one decision; `EACH` creates one decision per matched key:
+
+```js
+groups: [
+  { id: "default-item", paths: [["defaultItemId"], ["items"]] },
+  { id: "line-price", paths: [["items", EACH, "price"], ["items", EACH, "currency"]] },
+]
+```
+
+An `EACH` conflict carries a `binding` such as `{ key: "id", value: "a" }`. Mark computed values with `derived: [["total"], ["items", ANY, "lineTotal"]]`: they are excluded from merging and conflicts, and the result carries the latest server value (or the submitted value for new items). Recompute them before saving.
+
+### User-defined rules
+
+Rules state limits CAM enforces on every merge. Built-in rules are plain data: `required`, `min`, `max`, `minLength`, `maxLength`, `pattern`, `oneOf`, `unique`, `exactlyOne`, `allEqual`, `oneOfPath`, `sumOf`, and `requiredWith`. Custom rules are pure functions:
+
+```js
+rules: [
+  { id: "discount-cap", path: ["discount"], max: 0.3 },
+  { id: "default-exists", path: ["defaultItemId"], oneOfPath: ["items", ANY, "id"] },
+  {
+    id: "approval",
+    paths: [["price"], ["discount"]],
+    check: (state) => state.discount <= 0.2 || state.price >= 100 || "Large discounts need price >= 100",
+  },
+]
+```
+
+CAM evaluates each rule on both inputs and on the merged result, and reports who broke it:
+
+- An input that breaks a rule returns `kind: "invalid"` with `violations: [{ ruleId, side, message }]`. A pre-existing violation that neither side touched is not blamed on anyone.
+- If both inputs satisfy a rule but the merge does not, the result has a `kind: "rule"` conflict on the rule's paths. Choosing a side takes that side's values (or whole items) for those paths.
+
+Rules over `derived` paths are checked on the inputs only, because merged derived values are recomputed later.
+
+### Review policy
+
+`autoMerge: "review-mixed"` returns `kind: "review"` with the complete `value` and a `report` whenever a result combines changes from both sides, so a person confirms it before it is saved. Results that one side wrote, or that both sides agree on, stay `ok`. CAM cannot know business rules nobody states; rules check what is stated, and review covers the rest.
+
 ### Recovery adapter
 
-`createRecoveryController()` lives at `conflict-aware-mutation/recovery`. It accepts the application's versioned mutation, fetch, preparation, validation, and terminal-state callbacks. A stale mutation fetches the newest state and returns a review candidate or conflicts. Configure `groups` to preserve coupled-path semantics inside the controller; invalid group policy is rejected when the controller is created rather than waiting for a stale-write path. Use `undefinedObjectProperties: "omit"` when parser-style own object properties set to `undefined` should mean absence. In TypeScript this normalized mode intentionally exposes input/output state as broad `JsonValue` because omission can remove a property that a domain type marked as required; narrow it again only after application validation. The recovery write requires an explicit one-use confirmation token and the latest version. `autoRetry: "once"` is an opt-in for one clean automatic recovery write.
+`createRecoveryController()` lives at `conflict-aware-mutation/recovery`. It accepts the application's versioned mutation, fetch, preparation, validation, and terminal-state callbacks. A stale mutation fetches the newest state and returns a review candidate or conflicts. Configure `groups`, `arrays`, `derived`, `rules`, and `autoMerge` to use the same merge policy inside the controller; invalid policy is rejected when the controller is created rather than waiting for a stale-write path. A rule violation returns an `invalid` outcome, and with `autoMerge: "review-mixed"` a combined candidate always goes to review, even with `autoRetry: "once"`. Use `undefinedObjectProperties: "omit"` when parser-style own object properties set to `undefined` should mean absence. In TypeScript this normalized mode intentionally exposes input/output state as broad `JsonValue` because omission can remove a property that a domain type marked as required; narrow it again only after application validation. The recovery write requires an explicit one-use confirmation token and the latest version. `autoRetry: "once"` is an opt-in for one clean automatic recovery write.
 
 If that recovery write loses another version race, `changed-again` returns both the preserved candidate and the exact `currentServerState` / `latestVersion` baseline that produced it. Use that pair as the next `originalState` / `expectedVersion` when continuing recovery; this prevents server-only changes from being reclassified as user edits. A mutation that the backend already accepted is reported as `saved` even if navigation or cancellation happens while its response is in flight—cancellation cannot undo an accepted write.
 
@@ -183,7 +256,7 @@ Invalid supported-API inputs throw `CAMConfigError`, an `Error` with `code: "CAM
 
 Use JSON-compatible `type` aliases for state shapes. Interfaces lack the implicit index signature required by `JsonValue`.
 
-`mergeStates<T>()` returns a value typed as `T`, but does not validate your business rules or schema. Combining individually valid edits can violate cross-field constraints or discriminated unions. Validate the combined result before saving, and keep server-side validation authoritative.
+`mergeStates<T>()` returns a value typed as `T`, but does not validate your schema. Combining individually valid edits can violate cross-field constraints or discriminated unions: state those constraints as [rules](#user-defined-rules), validate the combined result before saving, and keep server-side validation authoritative. Calls that use the array, derived, rule, review, or wildcard-group options return `AdvancedMergeResult<T>`.
 
 ## Examples and playground
 

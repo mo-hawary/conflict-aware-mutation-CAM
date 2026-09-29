@@ -1148,3 +1148,67 @@ test("autoRetry once uses the fetched version and performs exactly one recovery 
     '"latest-2"',
   ])
 })
+
+test("recovery forwards collection options and merges keyed items", async () => {
+  const options = makeOptions({
+    arrays: { rules: [{ path: ["items"], mode: "keyed", key: "id" }] },
+  })
+  options.setLatest({ state: { items: [{ id: "a", q: 1, note: "server" }] }, etag: '"latest-2"' })
+  const controller = createRecoveryController(options)
+  const outcome = await controller.recover(input({
+    originalState: { items: [{ id: "a", q: 1 }] },
+    submittedState: { items: [{ id: "a", q: 2 }] },
+  }))
+  assert.equal(outcome.kind, "review-ready")
+  assert.deepEqual(outcome.candidate, { items: [{ id: "a", note: "server", q: 2 }] })
+})
+
+test("recovery reports rule violations as an invalid outcome", async () => {
+  const options = makeOptions({ rules: [{ id: "cap", path: ["discount"], max: 0.3 }] })
+  options.setLatest({ state: { discount: 0.1 }, etag: '"latest-2"' })
+  const controller = createRecoveryController(options)
+  const outcome = await controller.recover(input({
+    originalState: { discount: 0.1 },
+    submittedState: { discount: 0.9 },
+  }))
+  assert.equal(outcome.kind, "invalid")
+  assert.deepEqual(outcome.violations, [
+    { ruleId: "cap", side: "submitted", message: "/discount must be at most 0.3" },
+  ])
+  assert.deepEqual(outcome.currentServerState, { discount: 0.1 })
+})
+
+test("review-mixed recovery never auto-writes a combined candidate", async () => {
+  const options = makeOptions({ autoRetry: "once", autoMerge: "review-mixed" })
+  options.setLatest({ state: { title: "original", serverOnly: false }, etag: '"latest-2"' })
+  const controller = createRecoveryController(options)
+  const outcome = await controller.recover(input({
+    originalState: { title: "original", serverOnly: true },
+    submittedState: { title: "local", serverOnly: true },
+  }))
+  assert.equal(outcome.kind, "review-ready")
+  assert.deepEqual(outcome.candidate, { serverOnly: false, title: "local" })
+  assert.equal(options.events.filter(([name]) => name === "mutate").length, 1)
+})
+
+test("recovery validates merge-policy options when the controller is created", () => {
+  assert.throws(() => createRecoveryController(makeOptions({ arrays: { default: "zip" } })), CAMConfigError)
+  assert.throws(() => createRecoveryController(makeOptions({ rules: [{ id: "x" }] })), CAMConfigError)
+  assert.throws(() => createRecoveryController(makeOptions({ derived: [["a", { $cam: "any" }]] })), CAMConfigError)
+  assert.throws(() => createRecoveryController(makeOptions({ autoMerge: "sometimes" })), CAMConfigError)
+})
+
+test("recovery accepts derived paths and custom rules", async () => {
+  const options = makeOptions({
+    derived: [["total"]],
+    rules: [{ id: "custom", paths: [["title"]], check: (state) => state.title !== "forbidden" || "no" }],
+  })
+  options.setLatest({ state: { title: "original", total: 5 }, etag: '"latest-2"' })
+  const controller = createRecoveryController(options)
+  const outcome = await controller.recover(input({
+    originalState: { title: "original", total: 1 },
+    submittedState: { title: "local", total: 2 },
+  }))
+  assert.equal(outcome.kind, "review-ready")
+  assert.deepEqual(outcome.candidate, { title: "local", total: 5 })
+})

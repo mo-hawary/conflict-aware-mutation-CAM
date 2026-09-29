@@ -1,6 +1,6 @@
 # Data model and merge examples
 
-CAM compares three complete JSON snapshots. Objects recurse only when a plain object exists at the same path on all three sides. Arrays are atomic values. For an application-level dependency between multiple fields, use an explicit path group; CAM does not infer domain relationships.
+CAM compares three complete JSON snapshots. Objects recurse only when a plain object exists at the same path on all three sides. Arrays are atomic values unless an array rule opts them into keyed, sequence, set, or multiset merging. For an application-level dependency between multiple fields, use an explicit path group or a rule; CAM does not infer domain relationships.
 ### Deeply nested objects and ID-keyed records
 
 Independent edits inside existing nested objects merge recursively, including records whose keys are IDs:
@@ -61,9 +61,9 @@ Expected result:
 
 Here `p1` and `p2` are just object keys. CAM does not require or infer a special record schema.
 
-### Arrays of objects are atomic
+### Arrays of objects are atomic by default
 
-Even when objects inside the array have `id` fields, CAM does not merge different array elements independently:
+Without an array rule, even when objects inside the array have `id` fields, CAM does not merge different array elements independently:
 
 ```js
 import { mergeStates } from "conflict-aware-mutation"
@@ -122,6 +122,24 @@ Expected result:
 
 A one-sided array change is accepted, and identical array changes on both sides are accepted. Different changes on both sides conflict at the array path.
 
+### Merging arrays item by item
+
+The same input with a keyed rule merges both edits:
+
+```js
+const merged = mergeStates({
+  ...sameInputAsAbove,
+  arrays: { rules: [{ path: ["items"], mode: "keyed", key: "id" }] },
+})
+// { ok: true, value: { items: [{ id: "a", qty: 2 }, { id: "b", qty: 3 }] }, conflicts: [] }
+```
+
+Keyed items match by the key value and merge recursively, so a conflict inside an item has a path such as `["items", { key: "id", value: "a" }, "qty"]`. An item deleted on one side and edited on the other conflicts at the item path. New items keep their position relative to their neighbours; when both sides reorder shared items differently, the result is one conflict at the array path with `reason: "order"` whose values are the two key orders.
+
+Arrays without identity can use `mode: "sequence"` (or `arrays: { default: "sequence" }`). CAM aligns each edited array with the original and applies diff3: regions no side changed are kept, a region one side changed takes that side, and a region both sides changed differently conflicts at `["steps", { from, to }]`, where `from` and `to` index the original array. When every side has the same number of items in that region, the items are paired by position and merged recursively instead. Alignment is deterministic; for very large regions without unique anchors CAM stops refining, which can only produce more conflicts, never a wrong merge.
+
+`set` arrays merge membership (an element is kept if either side added it, or if it was original and neither side removed it) and `multiset` arrays merge counts. Neither conflicts. Duplicate values in a `set` array throw `CAMConfigError`.
+
 These merge results are structural only. Your application still owns server-side validation and must retry writes with the latest version, ETag, or equivalent optimistic-concurrency precondition.
 
 ### Coupled paths and reports
@@ -132,7 +150,15 @@ When fields must be selected together, configure a group with path-segment array
 
 Own enumerable object properties set to `undefined` are rejected by default. A parser that uses this representation for omitted captions can opt into `undefinedObjectProperties: "omit"` on `mergeStates()`, `applyConflictDecisions()`, or `resolveConflict()`. The option treats those object properties as absent while continuing to reject `undefined` at the root, in array slots, and in other unsupported positions.
 
-Identity-aware ID-array merging remains experimental and is not exported. The Phase 7 evaluation is recorded in [`array-by-id-evaluation.md`](../bench/array-by-id-evaluation.md); arrays stay atomic in the supported API.
+Group paths may use `ANY` and `EACH`. `ANY` links every matched field into one decision. `EACH` creates one group instance per matched key (a keyed-array item or an object property); its conflicts carry `binding`. A wildcard over an array without a keyed rule links the whole array. When a matched item exists on only one side, the whole item is the group member, so a choice never rebuilds an item neither side had.
+
+### Derived values and rules
+
+`derived` paths are removed from all three states before merging, so they never conflict or trigger groups, and the result carries the current server value at the same location (the submitted value where the server has none). Recompute them in the application, for example in the recovery controller's `prepareCandidate`.
+
+Rules run on the submitted state, the server state, and the merged result. A rule broken by an input is a violation of that input unless the original already broke it and that side left the rule's paths unchanged. A rule that both inputs satisfy but the merge breaks becomes a rule conflict over the rule's paths; choosing a side selects that side's values (whole items where an item exists on one side only), and the rule is checked again. Rules over derived paths are checked on the inputs only. Custom rule checks must be pure and synchronous: they receive a private copy of the state and return `true` or a message; any other return value, or a thrown error, is a `CAMConfigError`.
+
+The Phase 7 evaluation in [`array-by-id-evaluation.md`](../bench/array-by-id-evaluation.md) is superseded: keyed arrays ship together with pattern groups, derived paths, and rules, which cover the cross-field cases that evaluation identified.
 
 
 ## Determinism and validation

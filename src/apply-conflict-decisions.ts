@@ -1,5 +1,6 @@
 import { CAMConfigError } from "./errors.js"
 import {
+  conflictKey,
   mergeSnapshotResult,
   mergeSnapshotsWithChoices,
   snapshotMergeStates,
@@ -7,22 +8,28 @@ import {
 import type { MergeDecisionSelection } from "./merge-states.js"
 import { snapshotJsonValue } from "./validation.js"
 import type {
+  AdvancedApplyConflictDecisionsInput,
+  AdvancedMergeResult,
   ApplyConflictDecisionsInput,
-  Conflict,
   ConflictChoice,
   ConflictValue,
-  GroupConflict,
-  GroupConflictSlot,
+  ExtendedConflict,
+  ExtendedGroupConflict,
+  ExtendedGroupConflictSlot,
+  ExtendedPathSegment,
   GroupedMergeResult,
   GroupedMergeResultWithReport,
   JsonValue,
   MergeConflict,
   MergeResult,
   MergeResultWithReport,
+  NormalizedAdvancedApplyConflictDecisionsInput,
   NormalizedApplyConflictDecisionsInput,
   PathGroup,
-  PathSegment,
+  RuleConflict,
 } from "./types.js"
+
+type AnyConflict = MergeConflict | ExtendedConflict | ExtendedGroupConflict | RuleConflict
 
 function requiredOwnData(record: object, key: string): unknown {
   const descriptor = Object.getOwnPropertyDescriptor(record, key)
@@ -72,21 +79,38 @@ function normalizeConflictValue(value: unknown, label: string): ConflictValue {
   }
 }
 
-function normalizePath(value: unknown, label: string): PathSegment[] {
+function normalizeSegment(segment: JsonValue, label: string): ExtendedPathSegment {
+  if (typeof segment === "string" || typeof segment === "number") return segment
+  if (typeof segment === "object" && segment !== null && !Array.isArray(segment)) {
+    const record = segment as Record<string, JsonValue>
+    const keys = Object.keys(record).sort()
+    if (
+      keys.length === 2 && keys[0] === "key" && keys[1] === "value" &&
+      typeof record.key === "string" &&
+      (typeof record.value === "string" || typeof record.value === "number")
+    ) {
+      return { key: record.key, value: record.value }
+    }
+    if (
+      keys.length === 2 && keys[0] === "from" && keys[1] === "to" &&
+      typeof record.from === "number" && typeof record.to === "number"
+    ) {
+      return { from: record.from, to: record.to }
+    }
+  }
+  throw new CAMConfigError(`${label} must be a string, number, item segment, or range segment`)
+}
+
+function normalizePath(value: unknown, label: string): ExtendedPathSegment[] {
   const path = snapshotJsonValue(value, label)
   if (!Array.isArray(path)) throw new CAMConfigError(`${label} must be an array`)
-  return path.map((segment, index) => {
-    if (typeof segment !== "string" && typeof segment !== "number") {
-      throw new CAMConfigError(`${label}[${index}] must be a string or number`)
-    }
-    return segment
-  })
+  return path.map((segment, index) => normalizeSegment(segment, `${label}[${index}]`))
 }
 
 function normalizeGroupConflictSlots(
   value: unknown,
   label: string,
-): GroupConflictSlot[] {
+): ExtendedGroupConflictSlot[] {
   const slots = snapshotJsonValue(value, label)
   if (!Array.isArray(slots)) throw new CAMConfigError(`${label} must be an array`)
   return slots.map((slot, index) => {
@@ -100,35 +124,70 @@ function normalizeGroupConflictSlots(
   })
 }
 
-function normalizeConflict(value: unknown, label: string): MergeConflict {
+function normalizePaths(value: unknown, label: string): ExtendedPathSegment[][] {
+  const pathsValue = snapshotJsonValue(value, label)
+  if (!Array.isArray(pathsValue)) throw new CAMConfigError(`${label} must be an array`)
+  return pathsValue.map((path, index) => normalizePath(path, `${label}[${index}]`))
+}
+
+function normalizeConflict(value: unknown, label: string): AnyConflict {
   const record = asRecord(value, label)
   if (record.kind === "group") {
-    assertExactKeys(record, ["kind", "groupId", "paths", "submitted", "currentServer"], label)
+    const hasBinding = Object.hasOwn(record, "binding")
+    assertExactKeys(
+      record,
+      hasBinding
+        ? ["kind", "groupId", "binding", "paths", "submitted", "currentServer"]
+        : ["kind", "groupId", "paths", "submitted", "currentServer"],
+      label,
+    )
     if (typeof record.groupId !== "string" || record.groupId.length === 0) {
       throw new CAMConfigError(`${label}.groupId must be a non-empty string`)
     }
-    const pathsValue = snapshotJsonValue(record.paths, `${label}.paths`)
-    if (!Array.isArray(pathsValue) || pathsValue.length === 0) {
-      throw new CAMConfigError(`${label}.paths must be a non-empty array`)
+    const paths = normalizePaths(record.paths, `${label}.paths`)
+    if (paths.length === 0) throw new CAMConfigError(`${label}.paths must be a non-empty array`)
+    const conflict: ExtendedGroupConflict = { kind: "group", groupId: record.groupId, paths, submitted: [], currentServer: [] }
+    if (hasBinding) {
+      conflict.binding = normalizeSegment(snapshotJsonValue(record.binding, `${label}.binding`), `${label}.binding`)
     }
-    const conflict: GroupConflict = {
-      kind: "group",
-      groupId: record.groupId,
-      paths: pathsValue.map((path, index) => normalizePath(path, `${label}.paths[${index}]`)),
+    conflict.submitted = normalizeGroupConflictSlots(record.submitted, `${label}.submitted`)
+    conflict.currentServer = normalizeGroupConflictSlots(record.currentServer, `${label}.currentServer`)
+    return conflict
+  }
+  if (record.kind === "rule") {
+    assertExactKeys(record, ["kind", "ruleId", "message", "paths", "submitted", "currentServer"], label)
+    if (typeof record.ruleId !== "string" || record.ruleId.length === 0) {
+      throw new CAMConfigError(`${label}.ruleId must be a non-empty string`)
+    }
+    if (typeof record.message !== "string") throw new CAMConfigError(`${label}.message must be a string`)
+    const conflict: RuleConflict = {
+      kind: "rule",
+      ruleId: record.ruleId,
+      message: record.message,
+      paths: normalizePaths(record.paths, `${label}.paths`),
       submitted: normalizeGroupConflictSlots(record.submitted, `${label}.submitted`),
       currentServer: normalizeGroupConflictSlots(record.currentServer, `${label}.currentServer`),
     }
     return conflict
   }
 
-  assertExactKeys(record, ["path", "submitted", "currentServer"], label)
-  const conflict: Conflict = {
+  const hasReason = Object.hasOwn(record, "reason")
+  assertExactKeys(
+    record,
+    hasReason ? ["path", "submitted", "currentServer", "reason"] : ["path", "submitted", "currentServer"],
+    label,
+  )
+  const conflict: ExtendedConflict = {
     path: normalizePath(record.path, `${label}.path`),
     submitted: normalizeConflictValue(record.submitted, `${label}.submitted`),
     currentServer: normalizeConflictValue(
       record.currentServer,
       `${label}.currentServer`,
     ),
+  }
+  if (hasReason) {
+    if (record.reason !== "order") throw new CAMConfigError(`${label}.reason must be "order"`)
+    conflict.reason = "order"
   }
   return conflict
 }
@@ -162,72 +221,33 @@ function normalizeDecisions(value: unknown): MergeDecisionSelection[] {
   })
 }
 
-function sameJsonValue(left: JsonValue, right: JsonValue): boolean {
-  if (left === right) return true
-  if (typeof left !== "object" || typeof right !== "object") return false
-  if (left === null || right === null) return false
-
-  if (Array.isArray(left)) {
-    if (!Array.isArray(right) || left.length !== right.length) return false
-    return left.every((value, index) => sameJsonValue(value, right[index]!))
-  }
-  if (Array.isArray(right)) return false
-
-  const leftKeys = Object.keys(left)
-  const rightKeys = Object.keys(right)
-  if (leftKeys.length !== rightKeys.length) return false
-  return leftKeys.every(
-    (key, index) => key === rightKeys[index] && sameJsonValue(left[key]!, right[key]!),
-  )
+// Paths compare strictly: a decision for property "0" must not bind to a
+// conflict at numeric segment 0 (or the reverse).
+function strictPaths(conflict: AnyConflict): string {
+  const paths = "kind" in conflict
+    ? [
+        conflict.paths,
+        conflict.submitted.map(({ path }) => path),
+        conflict.currentServer.map(({ path }) => path),
+        conflict.kind === "group" ? (conflict as ExtendedGroupConflict).binding ?? null : null,
+      ]
+    : conflict.path
+  return JSON.stringify(paths)
 }
 
-function sameConflictValue(left: ConflictValue, right: ConflictValue): boolean {
-  if (left.exists !== right.exists) return false
-  return left.exists && right.exists ? sameJsonValue(left.value, right.value) : true
+function sameConflict(left: AnyConflict, right: AnyConflict): boolean {
+  return conflictKey(left) === conflictKey(right) && strictPaths(left) === strictPaths(right)
 }
 
-function samePath(left: readonly PathSegment[], right: readonly PathSegment[]): boolean {
-  return left.length === right.length && left.every(
-    (segment, index) => segment === right[index],
-  )
-}
-
-function sameConflict(left: MergeConflict, right: MergeConflict): boolean {
-  if ("kind" in left || "kind" in right) {
-    if (!("kind" in left) || !("kind" in right)) return false
-    return (
-      left.kind === "group" &&
-      right.kind === "group" &&
-      left.groupId === right.groupId &&
-      left.paths.length === right.paths.length &&
-      left.paths.every((path, index) => samePath(path, right.paths[index]!)) &&
-      left.submitted.length === right.submitted.length &&
-      left.submitted.every((slot, index) =>
-        samePath(slot.path, right.submitted[index]!.path) &&
-        sameConflictValue(slot.value, right.submitted[index]!.value),
-      ) &&
-      left.currentServer.length === right.currentServer.length &&
-      left.currentServer.every((slot, index) =>
-        samePath(slot.path, right.currentServer[index]!.path) &&
-        sameConflictValue(slot.value, right.currentServer[index]!.value),
-      )
-    )
-  }
-  return (
-    left.path.length === right.path.length &&
-    samePath(left.path, right.path) &&
-    sameConflictValue(left.submitted, right.submitted) &&
-    sameConflictValue(left.currentServer, right.currentServer)
-  )
-}
+type RuntimeResult = ReturnType<typeof mergeSnapshotResult>
 
 function applyDecisions(
-  input: ApplyConflictDecisionsInput | NormalizedApplyConflictDecisionsInput,
-):
-  | MergeResult<JsonValue>
-  | GroupedMergeResult<JsonValue>
-  | MergeResultWithReport<JsonValue>
-  | GroupedMergeResultWithReport<JsonValue> {
+  input:
+    | ApplyConflictDecisionsInput
+    | NormalizedApplyConflictDecisionsInput
+    | AdvancedApplyConflictDecisionsInput
+    | NormalizedAdvancedApplyConflictDecisionsInput,
+): RuntimeResult {
   const snapshots = snapshotMergeStates(input)
   const record = asRecord(input, "applyConflictDecisions input")
   const sessionId = requiredOwnData(record, "sessionId")
@@ -237,14 +257,14 @@ function applyDecisions(
   const decisions = normalizeDecisions(requiredOwnData(record, "decisions"))
   const current = mergeSnapshotResult(snapshots)
 
-  if (current.ok) {
+  if (current.ok || current.kind === "review") {
     if (decisions.length !== 0) {
       throw new CAMConfigError("decisions are stale because the current merge has no conflicts")
     }
     return current
   }
 
-  const currentConflicts = current.conflicts
+  const currentConflicts: readonly AnyConflict[] = current.conflicts
   if (decisions.length !== currentConflicts.length) {
     throw new CAMConfigError(
       "decisions must contain exactly one choice for every current conflict",
@@ -310,7 +330,17 @@ export function applyConflictDecisions(
   | MergeResultWithReport<JsonValue>
   | GroupedMergeResultWithReport<JsonValue>
 export function applyConflictDecisions<T extends JsonValue>(
-  input: ApplyConflictDecisionsInput<T> | NormalizedApplyConflictDecisionsInput,
+  input: AdvancedApplyConflictDecisionsInput<T>,
+): AdvancedMergeResult<T>
+export function applyConflictDecisions(
+  input: NormalizedAdvancedApplyConflictDecisionsInput,
+): AdvancedMergeResult<JsonValue>
+export function applyConflictDecisions<T extends JsonValue>(
+  input:
+    | ApplyConflictDecisionsInput<T>
+    | NormalizedApplyConflictDecisionsInput
+    | AdvancedApplyConflictDecisionsInput<T>
+    | NormalizedAdvancedApplyConflictDecisionsInput,
 ):
   | MergeResult<T>
   | GroupedMergeResult<T>
@@ -319,6 +349,8 @@ export function applyConflictDecisions<T extends JsonValue>(
   | MergeResult<JsonValue>
   | GroupedMergeResult<JsonValue>
   | MergeResultWithReport<JsonValue>
-  | GroupedMergeResultWithReport<JsonValue> {
-  return applyDecisions(input)
+  | GroupedMergeResultWithReport<JsonValue>
+  | AdvancedMergeResult<T>
+  | AdvancedMergeResult<JsonValue> {
+  return applyDecisions(input) as AdvancedMergeResult<T>
 }

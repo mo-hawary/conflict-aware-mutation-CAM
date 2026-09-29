@@ -188,7 +188,9 @@ jobs:
           assert.deepEqual(
             Object.keys(pkg).sort(),
             [
+              "ANY",
               "CAMConfigError",
+              "EACH",
               "applyConflictDecisions",
               "formatConflictPath",
               "matchConflictError",

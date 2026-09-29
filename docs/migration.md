@@ -67,3 +67,16 @@ The controller now accepts `groups` for the same coupled-path semantics used by 
 When a confirmed or automatic recovery write loses another version race, the `changed-again` outcome includes `candidate`, `currentServerState`, and `latestVersion`. Continue with that server snapshot as the new `originalState` and that version as the new `expectedVersion`; using the older editing baseline can misclassify earlier server-only changes as local edits.
 
 Cancellation and navigation guards prevent obsolete work from starting later side effects. They do not rewrite history: if `mutate()` has already been accepted by the backend, the controller returns `saved` even if the edit session becomes obsolete before the response is processed.
+
+## Array merging, linked fields, rules, and review (opt-in)
+
+These features are additive: calls that do not pass `arrays`, `derived`, `rules`, `autoMerge`, or wildcard group paths return exactly the same results and types as before.
+
+- `arrays` enables keyed, sequence (diff3), set, or multiset merging per path. Arrays remain atomic by default.
+- Group paths accept the exported `ANY` and `EACH` wildcards.
+- `derived` excludes computed paths from merging; recompute them before saving.
+- `rules` adds built-in and custom checks. Results can now be `kind: "invalid"` (an input breaks a rule) and conflicts can be `kind: "rule"`.
+- `autoMerge: "review-mixed"` returns `kind: "review"` for results that combine both sides' changes.
+- Calls that use any of these options are typed `AdvancedMergeResult<T>`. Conflicts inside arrays use `ItemSegment` (`{ key, value }`) and `RangeSegment` (`{ from, to }`) path segments, and keyed reorder conflicts carry `reason: "order"`. `applyConflictDecisions()` accepts all of them.
+- The recovery controller accepts the same options. Its `conflicts` outcome is typed `(MergeConflict | AdvancedMergeConflict)[]`, and it can return a new `invalid` outcome when rules are configured. Code that exhaustively switches on recovery outcome kinds should handle `"invalid"`.
+- The root entry now also exports `ANY` and `EACH`, and both entries can be loaded with `require()` on Node.js 22.12 or later.

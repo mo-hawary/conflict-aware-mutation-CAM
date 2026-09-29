@@ -230,20 +230,18 @@ Do not use dotted strings as the canonical core representation. Real keys may co
 
 A formatting helper may later expose JSON Pointer or human-readable strings.
 
-## Arrays in v1
+## Arrays
 
-Arrays are atomic values.
-
-Do not implement identity-aware array merging in v1.
-
-Rules:
+Arrays are atomic by default. Without array options:
 
 - only submitted side changes array -> keep submitted array
 - only server side changes array -> keep server array
 - both change to same array -> safe
 - both change differently -> conflict at the array path
 
-Do not recurse into array indexes for merge semantics in v1.
+Opt-in array rules (`arrays`) select `keyed`, `sequence` (diff3), `set`, or `multiset` merging per path. They never change the result of a call that does not configure them. Keyed items are addressed by `{ key, value }` path segments and sequence regions by `{ from, to }` segments in original indices; these segments appear only in results of calls that use array rules. Any array strategy may add conflicts when alignment is uncertain but must never silently combine incompatible edits.
+
+Pattern groups (`ANY`, `EACH`), `derived` paths, `rules`, and `autoMerge: "review-mixed"` are likewise opt-in. They exist so that cross-field domain constraints are declared explicitly; CAM still never infers them.
 
 Recurse into an object only when it exists as a plain object on all three sides. Both sides adding the same key with different objects is a conflict at that key's path.
 

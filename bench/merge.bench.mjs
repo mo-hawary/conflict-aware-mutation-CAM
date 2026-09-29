@@ -142,6 +142,83 @@ bench(
   mergeArrayById,
 )
 
+const keyedItems = { arrays: { rules: [{ path: ["items"], mode: "keyed", key: "id" }] } }
+
+bench("keyed arrays, 200 sparse record edits", () => {
+  const { originalState, submittedState, currentServerState } = sparseArrayScenario()
+  return {
+    originalState: { items: originalState },
+    submittedState: { items: submittedState },
+    currentServerState: { items: currentServerState },
+    ...keyedItems,
+  }
+})
+
+bench("keyed arrays, 10k records", () => {
+  const items = Array.from({ length: 10_000 }, (_, index) => ({ id: `r${index}`, qty: 1, price: index }))
+  return {
+    originalState: { items },
+    submittedState: { items: items.map((item, index) => (index % 1000 === 0 ? { ...item, qty: 2 } : item)) },
+    currentServerState: { items: [...items.filter((_, index) => index % 777 !== 0), { id: "new", qty: 1, price: 0 }] },
+    ...keyedItems,
+  }
+})
+
+bench("nested keyed arrays, 50×20 fields", () => {
+  const sections = Array.from({ length: 50 }, (_, section) => ({
+    id: `s${section}`,
+    fields: Array.from({ length: 20 }, (_, field) => ({ name: `f${field}`, value: field })),
+  }))
+  const edit = (target, value) =>
+    sections.map((section, index) =>
+      index === target
+        ? { ...section, fields: section.fields.map((field, position) => (position === 3 ? { ...field, value } : field)) }
+        : section,
+    )
+  return {
+    originalState: { sections },
+    submittedState: { sections: edit(5, -1) },
+    currentServerState: { sections: edit(40, -2) },
+    arrays: {
+      rules: [
+        { path: ["sections"], mode: "keyed", key: "id" },
+        { path: ["sections", { $cam: "any" }, "fields"], mode: "keyed", key: "name" },
+      ],
+    },
+  }
+})
+
+bench("sequence arrays, 5k items", () => {
+  const steps = Array.from({ length: 5_000 }, (_, index) => `step ${index}`)
+  const submitted = steps.slice()
+  submitted.splice(100, 1, "edited 100")
+  const server = steps.slice()
+  server.splice(4_000, 0, "inserted")
+  return {
+    originalState: { steps },
+    submittedState: { steps: submitted },
+    currentServerState: { steps: server },
+    arrays: { default: "sequence" },
+  }
+})
+
+bench("string-heavy payload, 2k text fields", () => {
+  const text = (index, suffix = "") => `${"Lorem ipsum dolor sit amet, ".repeat(8)}${index}${suffix}`
+  const originalState = wide(2_000, (index) => text(index))
+  return {
+    originalState,
+    submittedState: { ...originalState, k10: text(10, " edited") },
+    currentServerState: { ...originalState, k1900: text(1900, " server") },
+  }
+})
+
+bench("deletion-heavy edits, 5k keys", () => {
+  const originalState = wide(5_000, (index) => index)
+  const submittedState = Object.fromEntries(Object.entries(originalState).filter(([, value]) => value % 2 === 0))
+  const currentServerState = Object.fromEntries(Object.entries(originalState).filter(([, value]) => value % 3 !== 0))
+  return { originalState, submittedState, currentServerState }
+})
+
 bench("10k conflicts", () => ({
   originalState: wide(10_000, (index) => index),
   submittedState: wide(10_000, (index) => -index - 1),
