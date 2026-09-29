@@ -20,7 +20,7 @@ Small, headless, and zero runtime dependencies. Use it in forms, admin panels, C
 npm install conflict-aware-mutation
 ```
 
-ESM with TypeScript declarations. Node.js 22 and 24 are tested in CI; browser, Deno, and Bun smoke tests verify the framework-independent core. No CommonJS entry point is provided.
+ESM with TypeScript declarations. Node.js 22 and 24 are tested in CI; browser, Deno, and Bun smoke tests verify the framework-independent core. CommonJS code can load both entry points with `require()` on Node.js 22.12 or later, which supports `require()` of ES modules; `import` and `require()` share one module instance.
 
 > The GitHub `main` README describes the current source. The npm README describes its published version. Upgrading from 0.1.x? Read the [migration guide](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/docs/migration.md).
 
