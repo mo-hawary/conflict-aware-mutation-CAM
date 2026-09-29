@@ -26,7 +26,7 @@ Small, headless, and zero runtime dependencies. Use it in forms, admin panels, C
 npm install conflict-aware-mutation
 ```
 
-ESM with TypeScript declarations. Node.js 22 and 24 are tested in CI; browser, Deno, and Bun smoke tests verify the framework-independent core. CommonJS code can load both entry points with `require()` on Node.js 22.12 or later, which supports `require()` of ES modules; `import` and `require()` share one module instance.
+ESM with TypeScript declarations. Node.js 22 and 24 are tested in CI; browser, Deno, and Bun smoke tests verify the framework-independent core. CommonJS code can load both entry points with `require()` on Node.js 22.12 or later, which supports `require()` of ES modules; `import` and `require()` share one module instance. The package's `engines` field stays at `>=22` so ESM users on Node.js 22.0–22.11 are unaffected; on those versions `require()` fails with `ERR_REQUIRE_ESM`, so use `import()` there.
 
 > The GitHub `main` README describes the current source. The npm README describes its published version. Upgrading from 0.1.x? Read the [migration guide](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/docs/migration.md).
 
@@ -258,6 +258,13 @@ If that recovery write loses another version race, `changed-again` returns both 
 ### `CAMConfigError`
 
 Invalid supported-API inputs throw `CAMConfigError`, an `Error` with `code: "CAM_CONFIG_ERROR"`. Ordinary concurrent edits return a conflict result instead. Catch the exported class explicitly; it does not extend `TypeError`.
+
+Some `CAMConfigError`s depend on the data rather than the call, because the data does not fit a declared setting:
+
+- a `keyed` array with a missing or duplicate key, or a `set` array with a duplicate value, in any of the three states, including the server's;
+- a custom rule `check` that throws or returns something other than `true` or a string (the original error is the `cause`).
+
+These throw rather than return a conflict because no choice between sides can fix them: the setting or the data has to change. The recovery controller rethrows every `CAMConfigError` from its merge stage instead of returning `failed`, the same as for invalid JSON from `fetchLatest`. If server data can violate a declared array mode, validate or normalize it in `fetchLatest`, or catch `CAMConfigError` around `recover()`.
 
 ### TypeScript and domain validation
 

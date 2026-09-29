@@ -16,7 +16,7 @@ The design ships item-level array merging **together with** declared couplings (
 1. **No partial result after a conflict.** Unchanged.
 2. **Deterministic.** Identical inputs and options give identical output, including array order.
 3. **JSON only**, with the same validation and zero runtime dependencies.
-4. **A problem in the data is a conflict; a bad setting throws `CAMConfigError`.** Keyed arrays with missing or duplicate keys, and duplicate values in a set, are treated as settings errors: the declared rule does not fit the data.
+4. **A problem in the data is a conflict; a bad setting throws `CAMConfigError`.** Keyed arrays with missing or duplicate keys, duplicate values in a set, and custom rule checks that throw or return an invalid value are treated as settings errors: the declared rule does not fit the data, and no choice between sides can fix it. This applies in every state, including the server's, and the recovery controller rethrows these errors like any other `CAMConfigError` rather than returning `failed`. A separate data-error type was considered and not adopted: it would add public API for cases the application resolves by fixing its settings or normalizing data in `fetchLatest`.
 5. **Opt-in.** Calls without the new options return identical results and types.
 
 ## Path model
@@ -68,6 +68,7 @@ Semantic conflict detection is undecidable in general, so no merge engine can de
 - Plain calls show no measurable slowdown in interleaved A/B benchmarks.
 - The root bundle grows from about 5 kB to about 12.4 kB (minified and brotli-compressed), because array strategies, mode-aware change detection and rules share the merge engine. The size budget (13 kB root, 15 kB recovery) reflects that.
 - The recovery controller's `conflicts` outcome is typed to include the new conflict kinds, and it gains an `invalid` outcome.
+- `require()` support needs Node.js 22.12 or later. `engines` stays at `>=22` so that ESM users on 22.0–22.11 are not dropped; the README documents the 22.12 requirement for `require()`.
 
 ## Out of scope
 
