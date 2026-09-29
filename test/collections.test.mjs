@@ -272,20 +272,39 @@ test("sequence reports only the clashing range and resolves it", () => {
   assert.deepEqual(resolveAll(input, "currentServer").value, { steps: ["a", "z", "c", "D"] })
 })
 
-test("sequence pairs same-shape edits by position and merges them field by field", () => {
+test("sequence pairs equal-length regions only where each element changed on one side", () => {
   const input = {
     originalState: { rows: [{ n: 1, t: "a" }, { n: 2, t: "b" }, { n: 3, t: "c" }] },
-    submittedState: { rows: [{ n: 1, t: "A" }, { n: 2, t: "b" }, { n: 3, t: "C" }] },
-    currentServerState: { rows: [{ n: 9, t: "a" }, { n: 2, t: "b" }, { n: 3, t: "Z" }] },
+    submittedState: { rows: [{ n: 1, t: "A" }, { n: 2, t: "b" }, { n: 3, t: "c" }] },
+    currentServerState: { rows: [{ n: 1, t: "a" }, { n: 2, t: "b" }, { n: 3, t: "Z" }] },
+    ...sequence,
+  }
+  assert.deepEqual(mergeStates(input).value.rows, [{ n: 1, t: "A" }, { n: 2, t: "b" }, { n: 3, t: "Z" }])
+})
+
+test("sequence never merges inside a row both sides changed", () => {
+  // Without identity, CAM cannot prove two edited rows are the same row.
+  const input = {
+    originalState: { rows: [{ n: 1, t: "a" }, { n: 2, t: "b" }] },
+    submittedState: { rows: [{ n: 1, t: "A" }, { n: 2, t: "B" }] },
+    currentServerState: { rows: [{ n: 9, t: "a" }, { n: 2, t: "b" }] },
     ...sequence,
   }
   const result = mergeStates(input)
-  assert.deepEqual(result.conflicts, [{
-    path: ["rows", { from: 2, to: 3 }, "t"],
-    submitted: { exists: true, value: "C" },
-    currentServer: { exists: true, value: "Z" },
-  }])
-  assert.deepEqual(resolveAll(input, "submitted").value.rows, [{ n: 9, t: "A" }, { n: 2, t: "b" }, { n: 3, t: "C" }])
+  assert.deepEqual(result.conflicts.map(({ path }) => path), [["rows", { from: 0, to: 2 }]])
+  assert.deepEqual(resolveAll(input, "submitted").value, input.submittedState)
+  assert.deepEqual(resolveAll(input, "currentServer").value, input.currentServerState)
+})
+
+test("sequence reorder against edit conflicts instead of attaching values to the wrong rows", () => {
+  const result = mergeStates({
+    originalState: [{ name: "A", qty: 0 }, { name: "B", qty: 0 }],
+    submittedState: [{ name: "B", qty: 0 }, { name: "A", qty: 0 }],
+    currentServerState: [{ name: "A", qty: 10 }, { name: "B", qty: 20 }],
+    ...sequence,
+  })
+  assert.equal(result.ok, false)
+  assert.equal(result.conflicts.length, 1)
 })
 
 test("sequence moves conflict with edits instead of losing them", () => {
@@ -598,5 +617,176 @@ test("swapping sides mirrors sequence conflicts", () => {
       assert.equal(forward.ok, backward.ok)
       if (!forward.ok) assert.equal(forward.conflicts.length, backward.conflicts.length)
     }),
+  )
+})
+
+// ---------------------------------------------------------------------------
+// Review regressions and safety invariants
+// ---------------------------------------------------------------------------
+
+test("set merges never duplicate a member both sides added", () => {
+  const rules = { arrays: { rules: [{ path: ["t"], mode: "set" }] } }
+  assert.deepEqual(
+    mergeStates({ originalState: { t: [] }, submittedState: { t: ["shared", "mine"] }, currentServerState: { t: ["shared", "server"] }, ...rules }).value,
+    { t: ["shared", "server", "mine"] },
+  )
+  assert.deepEqual(
+    mergeStates({ originalState: { t: [] }, submittedState: { t: [{ a: 1, b: 2 }] }, currentServerState: { t: [{ b: 2, a: 1 }] }, ...rules }).value,
+    { t: [{ a: 1, b: 2 }] },
+  )
+})
+
+test("keyed reorders are reported, so review-mixed sees them combined with edits", () => {
+  const input = {
+    originalState: { items: [{ id: "a", qty: 1 }, { id: "b", qty: 1 }] },
+    submittedState: { items: [{ id: "b", qty: 1 }, { id: "a", qty: 1 }] },
+    currentServerState: { items: [{ id: "a", qty: 5 }, { id: "b", qty: 1 }] },
+    ...keyed(),
+  }
+  const reported = mergeStates({ ...input, includeReport: true })
+  const order = reported.report.changes.find((change) => change.reason === "order")
+  assert.deepEqual(order.path, ["items"])
+  assert.equal(order.provenance, "submitted-only")
+  assert.deepEqual(order.result, { exists: true, value: ["b", "a"] })
+  const review = mergeStates({ ...input, autoMerge: "review-mixed" })
+  assert.equal(review.kind, "review")
+  assert.deepEqual(review.value, { items: [{ id: "b", qty: 1 }, { id: "a", qty: 5 }] })
+})
+
+test("keyed order reports agreement and decided reorders", () => {
+  const both = mergeStates({
+    originalState: { items: [{ id: "a" }, { id: "b" }] },
+    submittedState: { items: [{ id: "b" }, { id: "a" }] },
+    currentServerState: { items: [{ id: "b" }, { id: "a" }, { id: "c" }] },
+    ...keyed(),
+    includeReport: true,
+  })
+  assert.equal(both.report.changes.find((change) => change.reason === "order").provenance, "identical-both")
+  const input = {
+    originalState: { items: [{ id: "a" }, { id: "b" }, { id: "c" }] },
+    submittedState: { items: [{ id: "b" }, { id: "a" }, { id: "c" }] },
+    currentServerState: { items: [{ id: "a" }, { id: "c" }, { id: "b" }] },
+    ...keyed(),
+    includeReport: true,
+  }
+  const decided = resolveAll(input, "currentServer")
+  assert.equal(decided.report.changes.find((change) => change.reason === "order").provenance, "chosen-currentServer")
+})
+
+test("configured collection invariants hold even when only one side changed", () => {
+  const keyedRule = keyed()
+  assert.throws(
+    () => mergeStates({ originalState: { items: [] }, submittedState: { items: [{ id: "a" }, { id: "a" }] }, currentServerState: { items: [] }, ...keyedRule }),
+    /submittedState\["items"\] contains duplicate key "a"/,
+  )
+  assert.throws(
+    () => mergeStates({ originalState: { items: [] }, submittedState: { items: [] }, currentServerState: { items: [{ name: "x" }] }, ...keyedRule }),
+    /currentServerState\["items"\]\[0\] must be an object with a "id" property/,
+  )
+  assert.throws(
+    () => mergeStates({ originalState: {}, submittedState: { t: [1, 1] }, currentServerState: {}, arrays: { rules: [{ path: ["t"], mode: "set" }] } }),
+    /submittedState\["t"\] contains a duplicate value/,
+  )
+  assert.throws(
+    () => mergeStates({
+      originalState: { sections: [{ id: "s", fields: [] }] },
+      submittedState: { sections: [{ id: "s", fields: [{ name: "a" }, { name: "a" }] }] },
+      currentServerState: { sections: [{ id: "s", fields: [] }] },
+      arrays: { rules: [{ path: ["sections"], mode: "keyed", key: "id" }, { path: ["sections", ANY, "fields"], mode: "keyed", key: "name" }] },
+    }),
+    /duplicate key "a"/,
+  )
+  // Items of atomic and sequence arrays are never merged inside, so nested rules do not apply there.
+  assert.deepEqual(
+    mergeStates({
+      originalState: { rows: [{ items: [] }] },
+      submittedState: { rows: [{ items: [{ id: "a" }, { id: "a" }] }] },
+      currentServerState: { rows: [{ items: [] }] },
+      arrays: { rules: [{ path: ["rows", ANY, "items"], mode: "keyed", key: "id" }] },
+    }).value,
+    { rows: [{ items: [{ id: "a" }, { id: "a" }] }] },
+  )
+})
+
+const rows = fc
+  .array(fc.record({ name: fc.constantFrom("A", "B", "C"), qty: fc.constantFrom(0, 1, 2) }), { maxLength: 5 })
+  .map((list) => list.map((row) => ({ name: row.name, qty: row.qty })))
+
+test("sequence results only contain rows taken whole from one side", () => {
+  fc.assert(
+    fc.property(rows, rows, rows, (original, submitted, server) => {
+      const result = mergeStates({ originalState: original, submittedState: submitted, currentServerState: server, ...sequence })
+      if (!result.ok) return
+      const written = new Set([...submitted, ...server].map((row) => JSON.stringify(row)))
+      for (const row of result.value) assert.ok(written.has(JSON.stringify(row)), `synthesized row ${JSON.stringify(row)}`)
+    }),
+    { numRuns: 500 },
+  )
+})
+
+test("set results are sets with the three-way membership rule", () => {
+  const members = fc.uniqueArray(fc.constantFrom("a", "b", "c", "d", 1, 2))
+  fc.assert(
+    fc.property(members, members, members, (original, submitted, server) => {
+      const result = mergeStates({
+        originalState: { t: original },
+        submittedState: { t: submitted },
+        currentServerState: { t: server },
+        arrays: { rules: [{ path: ["t"], mode: "set" }] },
+      })
+      const merged = result.value.t
+      assert.equal(new Set(merged).size, merged.length)
+      for (const member of new Set([...original, ...submitted, ...server])) {
+        const inO = original.includes(member)
+        const expected = inO ? submitted.includes(member) && server.includes(member) : submitted.includes(member) || server.includes(member)
+        assert.equal(merged.includes(member), expected)
+      }
+    }),
+    { numRuns: 500 },
+  )
+})
+
+test("review-mixed never returns ok for a keyed result that combines both sides", () => {
+  const records = fc
+    .uniqueArray(fc.record({ id: fc.constantFrom("p", "q", "r"), v: fc.constantFrom(0, 1) }), { selector: (r) => r.id, maxLength: 3 })
+    .map((list) => list.map((record) => ({ id: record.id, v: record.v })))
+  fc.assert(
+    fc.property(records, records, records, (original, submitted, server) => {
+      const result = mergeStates({
+        originalState: { items: original },
+        submittedState: { items: submitted },
+        currentServerState: { items: server },
+        ...keyed(),
+        autoMerge: "review-mixed",
+      })
+      if (result.ok) {
+        const value = JSON.stringify(result.value.items)
+        assert.ok(value === JSON.stringify(submitted) || value === JSON.stringify(server), `mixed result auto-accepted: ${value}`)
+      }
+    }),
+    { numRuns: 500 },
+  )
+})
+
+test("review-mixed only auto-accepts results that one side wrote, across every array mode", () => {
+  const record = fc
+    .record({
+      title: fc.constantFrom("a", "b"),
+      meta: fc.record({ x: fc.constantFrom(0, 1), y: fc.constantFrom(0, 1) }),
+      items: fc.uniqueArray(fc.record({ id: fc.constantFrom("p", "q", "r"), v: fc.constantFrom(0, 1) }), { selector: (r) => r.id, maxLength: 3 }),
+      steps: fc.array(fc.constantFrom("s1", "s2", "s3"), { maxLength: 4 }),
+      tags: fc.uniqueArray(fc.constantFrom("t1", "t2", "t3")),
+    })
+    .map((value) => JSON.parse(JSON.stringify(value)))
+  const arrays = { default: "sequence", rules: [{ path: ["items"], mode: "keyed", key: "id" }, { path: ["tags"], mode: "set" }] }
+  const canonical = (state) => JSON.stringify(mergeStates({ originalState: state, submittedState: state, currentServerState: state, arrays }).value)
+  fc.assert(
+    fc.property(record, record, record, (original, submitted, server) => {
+      const result = mergeStates({ originalState: original, submittedState: submitted, currentServerState: server, arrays, autoMerge: "review-mixed" })
+      if (!result.ok) return
+      const value = JSON.stringify(result.value)
+      assert.ok(value === canonical(submitted) || value === canonical(server), `mixed result auto-accepted: ${value}`)
+    }),
+    { numRuns: 1000 },
   )
 })

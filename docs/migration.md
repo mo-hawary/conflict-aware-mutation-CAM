@@ -79,4 +79,6 @@ These features are additive: calls that do not pass `arrays`, `derived`, `rules`
 - `autoMerge: "review-mixed"` returns `kind: "review"` for results that combine both sides' changes.
 - Calls that use any of these options are typed `AdvancedMergeResult<T>`. Conflicts inside arrays use `ItemSegment` (`{ key, value }`) and `RangeSegment` (`{ from, to }`) path segments, and keyed reorder conflicts carry `reason: "order"`. `applyConflictDecisions()` accepts all of them.
 - The recovery controller accepts the same options. Its `conflicts` outcome is typed `(MergeConflict | AdvancedMergeConflict)[]`, and it can return a new `invalid` outcome when rules are configured. Code that exhaustively switches on recovery outcome kinds should handle `"invalid"`.
+- `applyConflictDecisions()` accepts decisions accumulated across rounds (structural, then rule conflicts). A single round behaves as before.
+- The recovery controller deep-snapshots `rules` at creation; custom checks are kept by reference.
 - The root entry now also exports `ANY` and `EACH`, and both entries can be loaded with `require()` on Node.js 22.12 or later.

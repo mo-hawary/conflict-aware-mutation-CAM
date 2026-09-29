@@ -48,7 +48,7 @@ import {
   slotAt,
 } from "./paths.js"
 import type { NormalizedPattern } from "./paths.js"
-import { mergeCounted, mergeKeyed, mergeSequence } from "./merge-arrays.js"
+import { assertUnique, mergeCounted, mergeKeyed, mergeSequence, readKeyedSide } from "./merge-arrays.js"
 import type { ArrayMergeHooks } from "./merge-arrays.js"
 import { compileRules } from "./rules.js"
 import type { CompiledRule } from "./rules.js"
@@ -798,10 +798,11 @@ function mergeArrayNode(
       )
       return undefined
     },
-    change(segment, originalValue, submittedValue, currentValue, result, provenance) {
-      context.changes?.push(
-        pathChange(segmentPath(segment), originalValue, submittedValue, currentValue, result, provenance),
-      )
+    change(segment, originalValue, submittedValue, currentValue, result, provenance, reason) {
+      if (context.changes === undefined) return
+      const entry = pathChange(segmentPath(segment), originalValue, submittedValue, currentValue, result, provenance)
+      if (reason !== undefined) (entry as ExtendedPathChangeReportEntry).reason = reason
+      context.changes.push(entry)
     },
     label: formatLabel(path),
   }
@@ -1015,6 +1016,51 @@ function computeCore(
 }
 
 // ---------------------------------------------------------------------------
+// Collection invariants
+// ---------------------------------------------------------------------------
+
+/**
+ * Checks every keyed and set array a rule reaches, in all three states, before
+ * merging. Merge fast paths skip item-level work, so validity must not depend
+ * on which side changed an array. Items of atomic and sequence arrays are not
+ * descended into: CAM never merges inside them.
+ */
+function validateCollections(snapshots: MergeStateSnapshots): void {
+  const config = snapshots.arrays
+  if (config === undefined || !config.rules.some((rule) => rule.mode === "keyed" || rule.mode === "set")) return
+  const sides: [string, JsonValue][] = [
+    ["originalState", snapshots.originalState],
+    ["submittedState", snapshots.submittedState],
+    ["currentServerState", snapshots.currentServerState],
+  ]
+  for (const [side, root] of sides) {
+    const path: Path = []
+    const walk = (node: JsonValue): void => {
+      if (Array.isArray(node)) {
+        const rule = arrayRuleAt(config, path)
+        if (rule.mode === "set") assertUnique(node, side, formatLabel(path))
+        if (rule.mode !== "keyed") return
+        const keyed = readKeyedSide(node, rule.key!, formatLabel(path), side)
+        keyed.order.forEach((identity) => {
+          path.push({ key: rule.key!, value: keyed.values.get(identity)! })
+          walk(keyed.items.get(identity)!)
+          path.pop()
+        })
+        return
+      }
+      if (isPlainObject(node)) {
+        for (const key of Object.keys(node)) {
+          path.push(key)
+          walk(node[key]!)
+          path.pop()
+        }
+      }
+    }
+    walk(root)
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Derived paths
 // ---------------------------------------------------------------------------
 
@@ -1225,6 +1271,7 @@ function computeMergeSnapshots(
   snapshots: MergeStateSnapshots,
   decisions: readonly Decision[] = [],
 ): MergeComputation {
+  validateCollections(snapshots)
   const decisionMap = choicesByKey(decisions)
   const reviewMixed = snapshots.autoMerge === "review-mixed"
   const collectChanges = snapshots.includeReport || reviewMixed

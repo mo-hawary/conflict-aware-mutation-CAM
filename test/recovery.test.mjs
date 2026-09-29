@@ -1212,3 +1212,45 @@ test("recovery accepts derived paths and custom rules", async () => {
   assert.equal(outcome.kind, "review-ready")
   assert.deepEqual(outcome.candidate, { title: "local", total: 5 })
 })
+
+test("review-mixed recovery routes a keyed reorder combined with a server edit to review", async () => {
+  const options = makeOptions({
+    autoRetry: "once",
+    autoMerge: "review-mixed",
+    arrays: { rules: [{ path: ["items"], mode: "keyed", key: "id" }] },
+  })
+  options.setLatest({ state: { items: [{ id: "a", qty: 5 }, { id: "b", qty: 1 }] }, etag: '"latest-2"' })
+  const controller = createRecoveryController(options)
+  const outcome = await controller.recover(input({
+    originalState: { items: [{ id: "a", qty: 1 }, { id: "b", qty: 1 }] },
+    submittedState: { items: [{ id: "b", qty: 1 }, { id: "a", qty: 1 }] },
+  }))
+  assert.equal(outcome.kind, "review-ready")
+  assert.deepEqual(outcome.candidate, { items: [{ id: "b", qty: 1 }, { id: "a", qty: 5 }] })
+  // Only the initial write happened; no automatic recovery mutation.
+  assert.deepEqual(
+    options.events.filter(([name]) => name === "mutate").map(([, , write]) => write.attempt),
+    ["initial"],
+  )
+})
+
+test("recovery rules are snapshotted: mutating the caller's rule data later has no effect", async () => {
+  const allowed = ["draft"]
+  const paths = [["title"]]
+  const options = makeOptions({
+    rules: [
+      { id: "status", path: ["status"], oneOf: allowed },
+      { id: "custom", paths, check: (state) => state.title !== "forbidden" || "no" },
+    ],
+  })
+  const controller = createRecoveryController(options)
+  allowed.push("published")
+  paths[0][0] = "status"
+  options.setLatest({ state: { status: "draft", title: "original" }, etag: '"latest-2"' })
+  const outcome = await controller.recover(input({
+    originalState: { status: "draft", title: "original" },
+    submittedState: { status: "published", title: "local" },
+  }))
+  assert.equal(outcome.kind, "invalid")
+  assert.deepEqual(outcome.violations.map(({ ruleId }) => ruleId), ["status"])
+})

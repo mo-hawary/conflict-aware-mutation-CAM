@@ -764,10 +764,22 @@ function validateOptions<
   const frozenDerived = derived === undefined
     ? undefined
     : deepFreeze(snapshotJsonValue(derived, "derived")) as unknown as readonly PathPattern[]
-  // Rules may hold check functions; keep a frozen shallow copy of each rule.
+  // Deep-snapshot rule data so later caller mutations cannot change the
+  // policy; custom rules keep only their check function by reference.
   const frozenRules = rawRules === undefined
     ? undefined
-    : Object.freeze(rawRules.map((rule) => Object.freeze({ ...rule }))) as readonly MergeRule[]
+    : Object.freeze(rawRules.map((rule, index): MergeRule => {
+        const label = `rules[${index}]`
+        if (Object.getOwnPropertyDescriptor(rule, "check") !== undefined) {
+          const custom = rule as { id: string; paths: unknown; check: MergeRule extends infer R ? R extends { check: infer C } ? C : never : never }
+          return Object.freeze({
+            id: custom.id,
+            paths: deepFreeze(snapshotJsonValue(custom.paths, `${label}.paths`)),
+            check: custom.check,
+          }) as unknown as MergeRule
+        }
+        return deepFreeze(snapshotJsonValue(rule, label)) as unknown as MergeRule
+      })) as readonly MergeRule[]
   const config = {
     expectedError: readOwnData<RecoveryControllerInternalOptions<S, V, T, E, L>["expectedError"]>(options, "expectedError", "expectedError"),
     errorSignalFrom: readOwnData<RecoveryControllerInternalOptions<S, V, T, E, L>["errorSignalFrom"]>(options, "errorSignalFrom", "errorSignalFrom"),

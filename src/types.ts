@@ -387,6 +387,8 @@ export type ExtendedPathChangeReportEntry = {
   currentServer: ConflictValue
   result?: ConflictValue
   provenance: ExtendedChangeProvenance
+  /** Present for a keyed-array ordering change; values are key lists. */
+  reason?: "order"
 }
 
 export type ExtendedGroupChangeReportEntry = {

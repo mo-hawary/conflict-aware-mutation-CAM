@@ -33,6 +33,7 @@ export type ArrayMergeHooks = {
     currentServer: JsonValue,
     result: JsonValue,
     provenance: ExtendedChangeProvenance,
+    reason?: "order",
   ): void
   /** Human-readable array location for configuration errors. */
   label: string
@@ -230,6 +231,25 @@ export function diff3Chunks(
   return chunks
 }
 
+/** True when no position in the region changed differently on both sides. */
+function disjointInPlace(
+  oKeys: readonly string[],
+  oFrom: number,
+  aKeys: readonly string[],
+  aFrom: number,
+  bKeys: readonly string[],
+  bFrom: number,
+  length: number,
+): boolean {
+  for (let offset = 0; offset < length; offset += 1) {
+    const original = oKeys[oFrom + offset]
+    const submitted = aKeys[aFrom + offset]
+    const server = bKeys[bFrom + offset]
+    if (submitted !== original && server !== original && submitted !== server) return false
+  }
+  return true
+}
+
 function sameSlice(
   left: readonly string[],
   leftFrom: number,
@@ -291,15 +311,31 @@ export function mergeSequence(
       hooks.change(range, oSlice, aSlice, bSlice, aSlice, "identical-both")
       continue
     }
-    if (oSlice.length > 0 && aSlice.length === oSlice.length && bSlice.length === oSlice.length) {
-      // Same shape on every side: edits in place, merged element by element.
+    if (
+      oSlice.length > 0 &&
+      aSlice.length === oSlice.length &&
+      bSlice.length === oSlice.length &&
+      disjointInPlace(oKeys, chunk.oFrom, aKeys, chunk.aFrom, bKeys, chunk.bFrom, oSlice.length)
+    ) {
+      // Equal lengths alone do not prove that rows correspond (one side may
+      // have reordered them). Pairing by position is safe only when no
+      // element changed on both sides: each position then takes the one side
+      // that changed it, exactly as a one-sided change would.
       for (let offset = 0; offset < oSlice.length; offset += 1) {
-        const merged = hooks.recurse(oSlice[offset]!, aSlice[offset]!, bSlice[offset]!, {
-          from: chunk.oFrom + offset,
-          to: chunk.oFrom + offset + 1,
-        })
-        if (merged === ABSENT) complete = false
-        else result.push(merged)
+        const aChanged = aKeys[chunk.aFrom + offset] !== oKeys[chunk.oFrom + offset]
+        const taken = aChanged ? aSlice[offset]! : bSlice[offset]!
+        result.push(taken)
+        const bChanged = bKeys[chunk.bFrom + offset] !== oKeys[chunk.oFrom + offset]
+        if (aChanged || bChanged) {
+          hooks.change(
+            { from: chunk.oFrom + offset, to: chunk.oFrom + offset + 1 },
+            oSlice[offset]!,
+            aSlice[offset]!,
+            bSlice[offset]!,
+            taken,
+            aChanged && bChanged ? "identical-both" : aChanged ? "submitted-only" : "server-only",
+          )
+        }
       }
       continue
     }
@@ -321,7 +357,7 @@ export function mergeSequence(
 
 type KeyedSide = { order: string[]; items: Map<string, JsonValue>; values: Map<string, string | number> }
 
-function readKeyedSide(items: readonly JsonValue[], key: string, label: string, side: string): KeyedSide {
+export function readKeyedSide(items: readonly JsonValue[], key: string, label: string, side: string): KeyedSide {
   const order: string[] = []
   const byKey = new Map<string, JsonValue>()
   const values = new Map<string, string | number>()
@@ -415,23 +451,48 @@ export function mergeKeyed(
     merged.set(identity, item)
   }
 
-  // Order: compare only items every side still has.
-  const shared = (order: readonly string[]): string[] =>
-    order.filter((identity) => o.items.has(identity) && s.items.has(identity) && c.items.has(identity))
-  const oShared = shared(o.order)
-  const sShared = shared(s.order)
-  const cShared = shared(c.order)
+  // Order: compare the items both edited sides still have. Among original
+  // items, a one-sided reorder wins; when both sides hold newly added items
+  // in different relative positions, neither side's placement can be
+  // attributed, so that is an order conflict too.
+  const inBoth = (identity: string): boolean => s.items.has(identity) && c.items.has(identity)
+  const oShared = o.order.filter(inBoth)
+  const sShared = s.order.filter(inBoth)
+  const cShared = c.order.filter(inBoth)
+  const addedByBoth = sShared.some((identity) => !o.items.has(identity))
+  const keysOf = (order: readonly string[], side: KeyedSide): JsonValue[] =>
+    order.map((identity) => side.values.get(identity)!)
+  const originalOnly = (order: readonly string[]): string[] => order.filter((identity) => o.items.has(identity))
   let base: "submitted" | "currentServer"
-  if (sameOrder(sShared, oShared) || sameOrder(sShared, cShared)) base = "currentServer"
-  else if (sameOrder(cShared, oShared)) base = "submitted"
-  else {
-    const keysOf = (order: readonly string[], side: KeyedSide): JsonValue[] =>
-      order.map((identity) => side.values.get(identity)!)
+  let provenance: ExtendedChangeProvenance | undefined
+  if (sameOrder(sShared, cShared)) {
+    base = "currentServer"
+    if (!sameOrder(originalOnly(sShared), oShared)) provenance = "identical-both"
+  } else if (!addedByBoth && sameOrder(sShared, oShared)) {
+    base = "currentServer"
+    provenance = "server-only"
+  } else if (!addedByBoth && sameOrder(cShared, oShared)) {
+    base = "submitted"
+    provenance = "submitted-only"
+  } else {
     const choice = hooks.conflict(undefined, keysOf(oShared, o), keysOf(sShared, s), keysOf(cShared, c), "order")
     if (choice === undefined) return ABSENT
     base = choice
+    provenance = choice === "submitted" ? "chosen-submitted" : "chosen-currentServer"
   }
-
+  // Ordering is a change in its own right: report it so review policies see
+  // one side's reorder combined with the other side's edits.
+  if (provenance !== undefined) {
+    hooks.change(
+      undefined,
+      keysOf(oShared, o),
+      keysOf(sShared, s),
+      keysOf(cShared, c),
+      keysOf(base === "submitted" ? sShared : cShared, base === "submitted" ? s : c),
+      provenance,
+      "order",
+    )
+  }
   const keep = new Set(merged.keys())
   const baseOrder = base === "submitted" ? s.order : c.order
   const otherOrder = base === "submitted" ? c.order : s.order
@@ -451,7 +512,7 @@ function counts(values: readonly JsonValue[]): Map<string, number> {
   return map
 }
 
-function assertUnique(values: readonly JsonValue[], side: string, label: string): void {
+export function assertUnique(values: readonly JsonValue[], side: string, label: string): void {
   const seen = new Set<string>()
   for (const value of values) {
     const identity = canonicalKey(value)
@@ -498,7 +559,9 @@ export function mergeCounted(
   const c = counts(currentServer)
   const budget = new Map<string, number>()
   for (const identity of new Set([...o.keys(), ...s.keys(), ...c.keys()])) {
-    budget.set(identity, Math.max(0, (s.get(identity) ?? 0) + (c.get(identity) ?? 0) - (o.get(identity) ?? 0)))
+    const count = Math.max(0, (s.get(identity) ?? 0) + (c.get(identity) ?? 0) - (o.get(identity) ?? 0))
+    // A set member added on both sides is still one member.
+    budget.set(identity, unique ? Math.min(count, 1) : count)
   }
   const result: JsonValue[] = []
   for (const source of [currentServer, submitted]) {

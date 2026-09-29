@@ -161,7 +161,7 @@ An unmatched result is `{ matched: false, error }`. By default, `error` contains
 
 `resolveConflict()` composes error matching and merging when all three snapshots are already available. It matches the backend error first; an unmatched error is returned without merging. Use `matchConflictError()` separately when the application should fetch `currentServerState` only after a match.
 
-Use `applyConflictDecisions()` after presenting current conflicts. Each choice includes the exact conflict tuple and a `sessionId`; create a new session ID when the draft or snapshots change. CAM recomputes conflicts and rejects stale, missing, duplicate, or mismatched choices. It never selects a side implicitly.
+Use `applyConflictDecisions()` after presenting current conflicts. Each choice includes the exact conflict tuple and a `sessionId`; create a new session ID when the draft or snapshots change. CAM recomputes conflicts and rejects stale, missing, duplicate, or mismatched choices. It never selects a side implicitly. Rule conflicts appear only after structural conflicts are resolved, so resolution can take more than one round: pass the decisions from every round so far, and CAM replays them round by round against conflicts recomputed from the same snapshots.
 
 Object properties set to `undefined` remain invalid by default. The explicit `undefinedObjectProperties: "omit"` option is available to `mergeStates()`, `applyConflictDecisions()`, and `resolveConflict()` for parser output where own enumerable object properties with value `undefined` should mean absence. Root values, array entries, and other unsupported values remain strict.
 
@@ -195,9 +195,9 @@ const result = mergeStates({
 | Mode | For | Behavior |
 | --- | --- | --- |
 | `atomic` (default) | Values that only make sense whole | Different edits on both sides conflict at the array path |
-| `keyed` | Records with a stable ID (`key`) | Items matched by key and merged field by field. Additions and deletions merge; delete versus edit conflicts on the item; different reorders on both sides are one `reason: "order"` conflict. Missing or duplicate keys throw `CAMConfigError` |
-| `sequence` | Ordered lists without identity | diff3, the algorithm behind git merges: unchanged regions are kept, a region changed on one side takes that side, and only regions both sides changed differently conflict. Same-shape regions are merged element by element |
-| `set` | Unique values (tags, roles) | Membership merges; never conflicts |
+| `keyed` | Records with a stable ID (`key`) | Items matched by key and merged field by field. Additions and deletions merge; delete versus edit conflicts on the item; different orderings of the items both sides hold are one `reason: "order"` conflict. Missing or duplicate keys throw `CAMConfigError` in any state, even when only one side changed the array |
+| `sequence` | Ordered lists without identity | diff3, the algorithm behind git merges: unchanged regions are kept, a region changed on one side takes that side, and only regions both sides changed differently conflict. Elements are always taken whole from one side; CAM never merges inside an element both sides changed, because without identity it cannot prove they are the same row |
+| `set` | Unique values (tags, roles) | Membership merges; a member added on both sides appears once. Never conflicts |
 | `multiset` | Values that may repeat | Each value's count becomes `submitted + currentServer - original`; never conflicts |
 
 `arrays: { default: "sequence" }` applies diff3 to every array without a rule. Conflicts inside arrays use extra path segments: `{ key: "id", value: "a" }` for a keyed item and `{ from, to }` (original indices) for a sequence region. `formatConflictPath()` displays them as `/items/[id=a]/qty` and `/steps/[1..3)`. Adjacent edits in a sequence can conflict even when they do not overlap; that errs toward a conflict, never a wrong merge. Use `keyed` where items have identity.

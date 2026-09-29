@@ -319,3 +319,40 @@ test("review-mixed treats combined set merges and decided conflicts as mixed", (
     /stale/,
   )
 })
+
+test("staged resolution: accumulated decisions replay structural and then rule rounds", () => {
+  const input = {
+    ...states({ note: 0, x: 0, y: 0 }, { note: 1, x: 1, y: 0 }, { note: 2, x: 0, y: 1 }),
+    rules: [{ id: "sum", paths: [["x"], ["y"]], check: (state) => state.x + state.y <= 1 || "x + y must be <= 1" }],
+  }
+  const decide = (conflicts, choice) => conflicts.map((conflict) => ({ sessionId: "s", conflict, choice }))
+  const first = mergeStates(input)
+  assert.deepEqual(first.conflicts.map(({ path }) => path), [["note"]])
+  const noteDecisions = decide(first.conflicts, "submitted")
+
+  const second = applyConflictDecisions({ ...input, sessionId: "s", decisions: noteDecisions })
+  assert.equal(second.kind, "conflict")
+  assert.equal(second.conflicts[0].kind, "rule")
+  const ruleDecisions = decide(second.conflicts, "currentServer")
+
+  const done = applyConflictDecisions({ ...input, sessionId: "s", decisions: [...noteDecisions, ...ruleDecisions] })
+  assert.deepEqual(done, { ok: true, value: { note: 1, x: 0, y: 1 }, conflicts: [] })
+  // Order of accumulated decisions does not matter.
+  assert.deepEqual(applyConflictDecisions({ ...input, sessionId: "s", decisions: [...ruleDecisions, ...noteDecisions] }), done)
+
+  // A later round's decision alone is stale for the first round.
+  assert.throws(() => applyConflictDecisions({ ...input, sessionId: "s", decisions: ruleDecisions }), /stale/)
+  // A decision that matches no round is rejected, even alongside valid ones.
+  const bogus = decide([{ path: ["x"], submitted: { exists: true, value: 9 }, currentServer: { exists: true, value: 0 } }], "submitted")
+  assert.throws(() => applyConflictDecisions({ ...input, sessionId: "s", decisions: [...noteDecisions, ...ruleDecisions, ...bogus] }), /stale/)
+  // Decisions stay bound to their session.
+  assert.throws(
+    () => applyConflictDecisions({ ...input, sessionId: "other", decisions: [...noteDecisions, ...ruleDecisions] }),
+    /sessionId does not match/,
+  )
+  // Changed snapshots invalidate earlier rounds' decisions.
+  assert.throws(
+    () => applyConflictDecisions({ ...input, submittedState: { note: 3, x: 1, y: 0 }, sessionId: "s", decisions: [...noteDecisions, ...ruleDecisions] }),
+    /stale/,
+  )
+})

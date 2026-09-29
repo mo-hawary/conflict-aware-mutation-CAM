@@ -255,40 +255,69 @@ function applyDecisions(
     throw new CAMConfigError("sessionId must be a non-empty string")
   }
   const decisions = normalizeDecisions(requiredOwnData(record, "decisions"))
-  const current = mergeSnapshotResult(snapshots)
-
-  if (current.ok || current.kind === "review") {
-    if (decisions.length !== 0) {
-      throw new CAMConfigError("decisions are stale because the current merge has no conflicts")
-    }
-    return current
-  }
-
-  const currentConflicts: readonly AnyConflict[] = current.conflicts
-  if (decisions.length !== currentConflicts.length) {
-    throw new CAMConfigError(
-      "decisions must contain exactly one choice for every current conflict",
-    )
-  }
-
-  const assigned = new Array<boolean>(currentConflicts.length).fill(false)
   for (const decision of decisions) {
     if ((decision as MergeDecisionSelection & { sessionId: string }).sessionId !== sessionId) {
       throw new CAMConfigError("decision sessionId does not match the current session")
     }
-
-    const index = currentConflicts.findIndex((conflict) => sameConflict(conflict, decision.conflict))
-    if (index < 0) {
-      throw new CAMConfigError("decision conflict is stale or does not match a current conflict")
-    }
-    if (assigned[index]) throw new CAMConfigError("duplicate decision for a current conflict")
-    assigned[index] = true
   }
 
-  return mergeSnapshotsWithChoices(
-    snapshots,
-    decisions.map(({ conflict, choice }) => ({ conflict, choice })),
-  )
+  // Decisions may accumulate across rounds: rule conflicts are revealed only
+  // once structural conflicts are resolved. Replay them round by round, always
+  // against conflicts recomputed from these same snapshots. Every round must be
+  // covered completely, and every decision must match some round.
+  let pending = decisions.map(({ conflict, choice }): MergeDecisionSelection => ({ conflict, choice }))
+  const accepted: MergeDecisionSelection[] = []
+  let current = mergeSnapshotResult(snapshots)
+  for (let round = 0; ; round += 1) {
+    if (current.ok || current.kind === "review") {
+      if (pending.length !== 0) {
+        throw new CAMConfigError(
+          round === 0
+            ? "decisions are stale because the current merge has no conflicts"
+            : "decision conflict is stale or does not match a current conflict",
+        )
+      }
+      return current
+    }
+    const currentConflicts: readonly AnyConflict[] = current.conflicts
+    if (pending.length === 0) {
+      if (round === 0 && currentConflicts.length > 0) {
+        throw new CAMConfigError(
+          "decisions must contain exactly one choice for every current conflict",
+        )
+      }
+      // Either an invalid result with nothing to decide, or conflicts newly
+      // revealed by this round's choices: return them for the next round.
+      return current
+    }
+    if (currentConflicts.length === 0) {
+      throw new CAMConfigError("decision conflict is stale or does not match a current conflict")
+    }
+
+    const assigned = new Array<boolean>(currentConflicts.length).fill(false)
+    const matched: MergeDecisionSelection[] = []
+    const rest: MergeDecisionSelection[] = []
+    for (const decision of pending) {
+      const index = currentConflicts.findIndex((conflict) => sameConflict(conflict, decision.conflict as AnyConflict))
+      if (index < 0) {
+        rest.push(decision)
+        continue
+      }
+      if (assigned[index]) throw new CAMConfigError("duplicate decision for a current conflict")
+      assigned[index] = true
+      matched.push(decision)
+    }
+    if (matched.length < currentConflicts.length) {
+      throw new CAMConfigError(
+        matched.length === 0 || rest.length > 0
+          ? "decision conflict is stale or does not match a current conflict"
+          : "decisions must contain exactly one choice for every current conflict",
+      )
+    }
+    accepted.push(...matched)
+    pending = rest
+    current = mergeSnapshotsWithChoices(snapshots, accepted)
+  }
 }
 
 export function applyConflictDecisions<T extends JsonValue>(
