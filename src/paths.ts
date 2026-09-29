@@ -155,6 +155,55 @@ export function matchesPattern(
   return true
 }
 
+const itemIdentity = (value: string | number): string => (typeof value === "number" ? `n${value}` : `s${value}`)
+
+// Merge snapshots are private and never mutated, so an index built once per
+// array object stays valid. Without it, expanding a pattern over n keyed
+// items costs n linear scans.
+const keyedIndexes = new WeakMap<readonly JsonValue[], Map<string, Map<string, JsonValue>>>()
+
+function keyedIndex(array: readonly JsonValue[], key: string): Map<string, JsonValue> {
+  let byKey = keyedIndexes.get(array)
+  if (byKey === undefined) {
+    byKey = new Map()
+    keyedIndexes.set(array, byKey)
+  }
+  let index = byKey.get(key)
+  if (index === undefined) {
+    index = new Map()
+    for (const item of array) {
+      if (!isPlainObject(item) || !Object.hasOwn(item, key)) continue
+      const value = item[key]
+      if (typeof value !== "string" && typeof value !== "number") continue
+      const identity = itemIdentity(value)
+      if (!index.has(identity)) index.set(identity, item)
+    }
+    byKey.set(key, index)
+  }
+  return index
+}
+
+/** Removes paths beneath another kept path with the same group label. */
+export function dropCovered<T extends { path: ExtendedPathSegment[] }>(
+  entries: readonly T[],
+  label: (entry: T) => string = () => "",
+): T[] {
+  const sorted = entries.slice().sort((a, b) => comparePath(a.path, b.path) || a.path.length - b.path.length)
+  const kept: T[] = []
+  const keptKeys = new Set<string>()
+  for (const entry of sorted) {
+    const prefix = label(entry)
+    let covered = false
+    for (let length = 1; length < entry.path.length && !covered; length += 1) {
+      covered = keptKeys.has(prefix + encodePath(entry.path.slice(0, length)))
+    }
+    if (covered) continue
+    kept.push(entry)
+    keptKeys.add(prefix + encodePath(entry.path))
+  }
+  return kept
+}
+
 /**
  * Navigates one segment. Object properties are addressed by primitive
  * segments, keyed-array items by item segments, and (only when `indexArrays`
@@ -167,16 +216,7 @@ export function childAt(
 ): Slot {
   if (typeof segment === "object") {
     if (!isItemSegment(segment) || !Array.isArray(slot)) return ABSENT
-    for (const item of slot) {
-      if (
-        isPlainObject(item) &&
-        Object.hasOwn(item, segment.key) &&
-        item[segment.key] === segment.value
-      ) {
-        return item
-      }
-    }
-    return ABSENT
+    return keyedIndex(slot, segment.key).get(itemIdentity(segment.value)) ?? ABSENT
   }
   if (isPlainObject(slot)) return childSlot(slot, String(segment))
   if (
@@ -342,16 +382,5 @@ export function expandWritable(
   }
   walk(roots.slice(), 0, undefined)
   // Drop paths beneath an emitted ancestor: the ancestor already covers them.
-  const all = Array.from(results.values()).sort((a, b) => comparePath(a.path, b.path))
-  const kept: WritableMatch[] = []
-  for (const match of all) {
-    const covered = kept.some(
-      (existing) =>
-        existing.path.length < match.path.length &&
-        encodePath(existing.path) === encodePath(match.path.slice(0, existing.path.length)) &&
-        JSON.stringify(existing.binding ?? null) === JSON.stringify(match.binding ?? null),
-    )
-    if (!covered) kept.push(match)
-  }
-  return kept
+  return dropCovered(Array.from(results.values()), (match) => JSON.stringify(match.binding ?? null))
 }

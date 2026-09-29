@@ -849,3 +849,92 @@ test("an order-only set or multiset change never sends a one-sided result to rev
     { numRuns: 1000 },
   )
 })
+
+// ---------------------------------------------------------------------------
+// Second review round
+// ---------------------------------------------------------------------------
+
+test("large keyed appends do not overflow the stack", () => {
+  const added = Array.from({ length: 30_000 }, (_, index) => ({ id: index + 1 }))
+  const result = mergeStates({
+    originalState: { l: [{ id: 0, v: 0 }] },
+    submittedState: { l: [{ id: 0, v: 0 }, ...added] },
+    currentServerState: { l: [{ id: 0, v: 1 }] },
+    ...keyed(["l"]),
+  })
+  assert.equal(result.value.l.length, 30_001)
+  assert.deepEqual(result.value.l[0], { id: 0, v: 1 })
+  assert.deepEqual(result.value.l.at(-1), { id: 30_000 })
+})
+
+test("set order inside keyed items is not a change", () => {
+  const input = {
+    originalState: { items: [{ id: "a", tags: ["a", "b"], note: 1 }] },
+    submittedState: { items: [{ id: "a", tags: ["b", "a"], note: 1 }] },
+    currentServerState: { items: [{ id: "a", tags: ["a", "b"], note: 2 }] },
+    arrays: { rules: [{ path: ["items"], mode: "keyed", key: "id" }, { path: ["items", ANY, "tags"], mode: "set" }] },
+  }
+  assert.deepEqual(mergeStates({ ...input, autoMerge: "review-mixed" }), {
+    ok: true,
+    value: { items: [{ id: "a", note: 2, tags: ["a", "b"] }] },
+    conflicts: [],
+  })
+  const report = mergeStates({ ...input, includeReport: true }).report.changes
+  assert.deepEqual(report.map(({ path, provenance }) => [path, provenance]), [[["items"], "server-only"]])
+})
+
+test("sequence: a move on one side never undoes a deletion on the other", () => {
+  const input = { originalState: ["e0", "e1"], submittedState: ["e1"], currentServerState: ["e1", "e0"], ...sequence }
+  const first = mergeStates(input)
+  assert.deepEqual(first.conflicts, [{
+    path: [{ from: 0, to: 2 }],
+    submitted: { exists: true, value: ["e1"] },
+    currentServer: { exists: true, value: ["e1", "e0"] },
+  }])
+  assert.deepEqual(resolveAll(input, "submitted").value, ["e1"])
+  assert.deepEqual(resolveAll(input, "currentServer").value, ["e1", "e0"])
+})
+
+test("sequence never leaves a deleted value with more copies than its three-way count", () => {
+  const list = fc.array(fc.constantFrom("a", "b", "c", "d"), { maxLength: 6 })
+  const threeWay = (o, s, c) => (s === o ? c : c === o || s === c ? s : Math.max(0, s + c - o))
+  const count = (values, value) => values.filter((entry) => entry === value).length
+  fc.assert(
+    fc.property(list, list, list, (original, submitted, server) => {
+      const result = mergeStates({ originalState: original, submittedState: submitted, currentServerState: server, ...sequence })
+      if (!result.ok) return
+      for (const value of new Set(original)) {
+        const o = count(original, value)
+        const s = count(submitted, value)
+        const c = count(server, value)
+        if (s < o || c < o) assert.equal(count(result.value, value), threeWay(o, s, c), `value ${value}`)
+      }
+    }),
+    { numRuns: 2000 },
+  )
+})
+
+test("multiset counts: identical changes agree, different changes combine", () => {
+  const rules = { arrays: { rules: [{ path: ["v"], mode: "multiset" }] } }
+  const run = (o, s, c) => mergeStates({ originalState: { v: o }, submittedState: { v: s }, currentServerState: { v: c }, ...rules }).value.v
+  // Both sides removed one copy: one copy is removed.
+  assert.deepEqual(run(["x", "x"], ["x", "y"], ["x"]), ["x", "y"])
+  // Different changes combine their deltas.
+  assert.deepEqual(run(["x"], ["x", "x"], ["x", "x", "x"]).filter((v) => v === "x").length, 4)
+  assert.deepEqual(run(["x", "x", "x"], ["x"], ["x", "x"]).filter((v) => v === "x").length, 0)
+})
+
+test("EACH expansion over keyed arrays stays linear", () => {
+  const base = Array.from({ length: 8_000 }, (_, index) => ({ id: `i${index}`, price: 1, currency: "EUR" }))
+  const started = performance.now()
+  const result = mergeStates({
+    originalState: { items: base },
+    submittedState: { items: base.map((item, index) => (index === 5 ? { ...item, price: 2 } : item)) },
+    currentServerState: { items: base.map((item, index) => (index === 7_995 ? { ...item, currency: "USD" } : item)) },
+    ...keyed(),
+    groups: [{ id: "money", paths: [["items", EACH, "price"], ["items", EACH, "currency"]] }],
+  })
+  assert.equal(result.ok, true)
+  // Quadratic expansion took seconds here; linear expansion takes well under one.
+  assert.ok(performance.now() - started < 3_000)
+})

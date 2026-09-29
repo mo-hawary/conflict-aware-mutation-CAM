@@ -3,12 +3,12 @@
     "name": "root entry",
     "path": "dist/index.js",
     "import": "*",
-    "limit": "12 kB"
+    "limit": "13 kB"
   },
   {
     "name": "recovery entry",
     "path": "dist/recovery/index.js",
     "import": "*",
-    "limit": "14 kB"
+    "limit": "15 kB"
   }
 ]

@@ -13,6 +13,7 @@ import type {
   ExtendedPathSegment,
   ExtendedReportSlot,
   GroupedMergeResult,
+  ItemSegment,
   GroupedMergeResultWithReport,
   JsonValue,
   MergeConflict,
@@ -29,12 +30,13 @@ import type {
 } from "./types.js"
 import { CAMConfigError } from "./errors.js"
 import { defineJsonProperty, snapshotJsonValue } from "./validation.js"
-import { ABSENT, childSlot, isPlainObject, slotEqual, toConflictValue } from "./slots.js"
+import { ABSENT, canonicalKey, childSlot, isPlainObject, jsonEqual, slotEqual, toConflictValue } from "./slots.js"
 import type { JsonObject, Slot } from "./slots.js"
 import {
   childAt,
   clonePath,
   comparePath,
+  dropCovered,
   encodePath,
   expandWritable,
   isEach,
@@ -609,16 +611,7 @@ function groupInstances(
       comparePath(left.binding === undefined ? [] : [left.binding], right.binding === undefined ? [] : [right.binding]),
     )
     for (const bucket of ordered) {
-      const sorted = Array.from(bucket.paths.values()).sort(comparePath)
-      const paths: Path[] = []
-      for (const path of sorted) {
-        const covered = paths.some(
-          (existing) =>
-            existing.length < path.length &&
-            encodePath(existing) === encodePath(path.slice(0, existing.length)),
-        )
-        if (!covered) paths.push(path)
-      }
+      const paths = dropCovered(Array.from(bucket.paths.values(), (path) => ({ path }))).map(({ path }) => path)
       if (paths.length === 0) continue
       const instance: NormalizedPathGroup = { id: group.id, paths }
       if (bucket.binding !== undefined) instance.binding = bucket.binding
@@ -748,6 +741,77 @@ type MergeContext = {
   /** Proper prefixes of forced paths: arrays there must merge item by item. */
   forcedPrefixes: ReadonlySet<string>
   arrays: ArrayConfig | undefined
+  /**
+   * Change detection. Plain JSON equality, except that with set or multiset
+   * rules it compares those arrays by membership or counts at any depth.
+   */
+  equal: ((left: Slot, right: Slot, path: Path) => boolean) | undefined
+}
+
+function hasCountedRules(config: ArrayConfig | undefined): boolean {
+  return config !== undefined && config.rules.some((rule) => rule.mode === "set" || rule.mode === "multiset")
+}
+
+function countsOf(values: readonly JsonValue[]): Map<string, number> {
+  const map = new Map<string, number>()
+  for (const value of values) {
+    const identity = canonicalKey(value)
+    map.set(identity, (map.get(identity) ?? 0) + 1)
+  }
+  return map
+}
+
+/** Equality under the configured array modes; used only when counted rules exist. */
+function modeAwareEqual(config: ArrayConfig, left: Slot, right: Slot, path: Path): boolean {
+  if (left === ABSENT || right === ABSENT) return left === right
+  if (Array.isArray(left) && Array.isArray(right)) {
+    const rule = arrayRuleAt(config, path)
+    if (rule.mode === "set" || rule.mode === "multiset") {
+      if (left.length !== right.length) return false
+      const leftCounts = countsOf(left)
+      const rightCounts = countsOf(right)
+      if (leftCounts.size !== rightCounts.size) return false
+      for (const [identity, count] of leftCounts) if (rightCounts.get(identity) !== count) return false
+      return true
+    }
+    if (rule.mode === "keyed" && left.length === right.length) {
+      // Order is meaningful for keyed arrays; items compare recursively so
+      // nested sets inside them compare by membership.
+      for (let index = 0; index < left.length; index += 1) {
+        const leftItem = left[index]!
+        const rightItem = right[index]!
+        if (!isPlainObject(leftItem) || !isPlainObject(rightItem)) return jsonEqual(left, right)
+        const value = leftItem[rule.key!]
+        if ((typeof value !== "string" && typeof value !== "number") || rightItem[rule.key!] !== value) return false
+        path.push({ key: rule.key!, value })
+        const same = modeAwareEqual(config, leftItem, rightItem, path)
+        path.pop()
+        if (!same) return false
+      }
+      return true
+    }
+    return jsonEqual(left, right)
+  }
+  if (isPlainObject(left) && isPlainObject(right)) {
+    const leftKeys = Object.keys(left)
+    const rightKeys = Object.keys(right)
+    if (leftKeys.length !== rightKeys.length) return false
+    for (const key of leftKeys) {
+      if (!Object.hasOwn(right, key)) return false
+      path.push(key)
+      const same = modeAwareEqual(config, left[key]!, right[key]!, path)
+      path.pop()
+      if (!same) return false
+    }
+    return true
+  }
+  return jsonEqual(left, right)
+}
+
+// Plain calls keep the direct comparison on the hot path; only configured
+// set/multiset rules pay for mode-aware equality.
+function slotsEqual(context: MergeContext, left: Slot, right: Slot, path: Path): boolean {
+  return context.equal === undefined ? slotEqual(left, right) : context.equal(left, right, path)
 }
 
 const NOT_HANDLED: unique symbol = Symbol("cam.notHandled")
@@ -772,9 +836,9 @@ function mergeArrayNode(
   if (
     !counted &&
     !forcedBeneath &&
-    (slotEqual(submitted, original) ||
-      slotEqual(currentServer, original) ||
-      slotEqual(submitted, currentServer))
+    (slotsEqual(context, submitted, original, path) ||
+      slotsEqual(context, currentServer, original, path) ||
+      slotsEqual(context, submitted, currentServer, path))
   ) {
     return NOT_HANDLED
   }
@@ -917,17 +981,17 @@ function mergeSlot(
   // Compare lazily: deep equality dominates merge time, and the common
   // unchanged subtree needs only the first comparison unless a report is on.
   const changes = context.changes
-  if (slotEqual(submitted, original)) {
-    if (changes !== undefined && !slotEqual(currentServer, original)) {
+  if (slotsEqual(context, submitted, original, path)) {
+    if (changes !== undefined && !slotsEqual(context, currentServer, original, path)) {
       changes.push(pathChange(path, original, submitted, currentServer, currentServer, "server-only"))
     }
     return currentServer
   }
-  if (slotEqual(currentServer, original)) {
+  if (slotsEqual(context, currentServer, original, path)) {
     changes?.push(pathChange(path, original, submitted, currentServer, submitted, "submitted-only"))
     return submitted
   }
-  if (slotEqual(submitted, currentServer)) {
+  if (slotsEqual(context, submitted, currentServer, path)) {
     changes?.push(pathChange(path, original, submitted, currentServer, submitted, "identical-both"))
     return submitted
   }
@@ -1012,6 +1076,9 @@ function computeCore(
       splitPrefixes,
       forcedPrefixes,
       arrays: snapshots.arrays,
+      equal: hasCountedRules(snapshots.arrays)
+        ? (left, right, path) => modeAwareEqual(snapshots.arrays!, left, right, path)
+        : undefined,
     },
   )
 
@@ -1115,87 +1182,126 @@ function stripDerived(state: JsonValue, patterns: readonly NormalizedPattern[]):
   return result as JsonValue
 }
 
+type SourcePair = { full: Slot; stripped: Slot }
+
 /**
  * Re-fills derived values into the merged result: the current server's value
  * at the corresponding location, else the submitted value. Keyed-array items
- * correspond by key, other arrays by position.
+ * correspond by key. Items of other arrays correspond by content: every
+ * element of such an array is taken whole from one side, so its derived-free
+ * form equals exactly one source element (duplicates pair in order). Writes
+ * are decided against the untouched merged result and applied afterwards.
  */
-function refillPattern(
-  node: Slot,
-  server: Slot,
-  submitted: Slot,
-  pattern: NormalizedPattern,
-  index: number,
-  path: Path,
-  keyedKeyAt: (path: readonly ExtendedPathSegment[]) => string | undefined,
-): Slot {
-  if (node === ABSENT || node === null || typeof node !== "object") return node
-  const segment = pattern[index]!
-  if (index === pattern.length - 1) {
-    if (!isPlainObject(node)) return node
-    const key = String(segment)
-    const fromServer = childAt(server, key)
-    const value = fromServer !== ABSENT ? fromServer : childAt(submitted, key)
-    if (value === ABSENT) return node
-    const copy: JsonObject = {}
-    for (const existing of Object.keys(node)) defineJsonProperty(copy, existing, node[existing]!)
-    defineJsonProperty(copy, key, value)
-    return copy
-  }
-  const descend = (child: JsonValue, childSegment: ExtendedPathSegment, lookup: ExtendedPathSegment): JsonValue => {
-    path.push(childSegment)
-    const result = refillPattern(
-      child,
-      childAt(server, lookup, true),
-      childAt(submitted, lookup, true),
-      pattern,
-      index + 1,
-      path,
-      keyedKeyAt,
-    ) as JsonValue
-    path.pop()
-    return result
-  }
-  if (Array.isArray(node)) {
-    const itemKey = keyedKeyAt(path)
-    const visit = (item: JsonValue, position: number): JsonValue => {
-      if (itemKey !== undefined && isPlainObject(item)) {
-        const value = item[itemKey]
-        if (typeof value === "string" || typeof value === "number") {
-          return descend(item, position, { key: itemKey, value })
-        }
-      }
-      return descend(item, position, position)
-    }
-    if (isWildcard(segment)) return node.map(visit)
-    if (typeof segment !== "number" || segment >= node.length) return node
-    const copy = node.slice()
-    copy[segment] = visit(node[segment]!, segment)
-    return copy
-  }
-  const copy: JsonObject = {}
-  for (const key of Object.keys(node)) {
-    const matches = isWildcard(segment) || String(segment) === key
-    defineJsonProperty(copy, key, matches ? descend(node[key]!, key, key) : node[key]!)
-  }
-  return copy
-}
-
-function refillDerived(candidate: JsonValue, snapshots: MergeStateSnapshots): JsonValue {
-  let result: Slot = candidate
+function refillDerived(
+  candidate: JsonValue,
+  snapshots: MergeStateSnapshots,
+  states: WorkingStates,
+): JsonValue {
   const keyedKeyAt = keyedKeyLookup(snapshots.arrays)
+  const writes: { path: (string | number)[]; value: JsonValue }[] = []
+
+  const pool = (source: SourcePair | undefined): Map<string, number[]> | undefined => {
+    if (source === undefined || !Array.isArray(source.stripped)) return undefined
+    const byContent = new Map<string, number[]>()
+    source.stripped.forEach((item, index) => {
+      const identity = canonicalKey(item)
+      const list = byContent.get(identity)
+      if (list === undefined) byContent.set(identity, [index])
+      else list.push(index)
+    })
+    return byContent
+  }
+  const take = (source: SourcePair | undefined, available: Map<string, number[]> | undefined, identity: string): SourcePair | undefined => {
+    const index = available?.get(identity)?.shift()
+    if (source === undefined || index === undefined) return undefined
+    return { full: (source.full as JsonValue[])[index]!, stripped: (source.stripped as JsonValue[])[index]! }
+  }
+  const child = (source: SourcePair | undefined, segment: ExtendedPathSegment): SourcePair | undefined =>
+    source === undefined ? undefined : { full: childAt(source.full, segment), stripped: childAt(source.stripped, segment) }
+
   for (const pattern of snapshots.derived) {
-    result = refillPattern(
-      result,
-      snapshots.currentServerState,
-      snapshots.submittedState,
-      pattern,
+    const writePath: (string | number)[] = []
+    const rulePath: Path = []
+    const walk = (node: JsonValue, server: SourcePair | undefined, submitted: SourcePair | undefined, index: number): void => {
+      if (node === null || typeof node !== "object") return
+      const segment = pattern[index]!
+      if (index === pattern.length - 1) {
+        if (!isPlainObject(node)) return
+        const key = String(segment)
+        const fromServer = server === undefined ? ABSENT : childAt(server.full, key)
+        const value = fromServer !== ABSENT ? fromServer : submitted === undefined ? ABSENT : childAt(submitted.full, key)
+        if (value !== ABSENT) writes.push({ path: [...writePath, key], value })
+        return
+      }
+      const descend = (item: JsonValue, position: string | number, ruleSegment: ExtendedPathSegment, nextServer: SourcePair | undefined, nextSubmitted: SourcePair | undefined): void => {
+        writePath.push(position)
+        rulePath.push(ruleSegment)
+        walk(item, nextServer, nextSubmitted, index + 1)
+        rulePath.pop()
+        writePath.pop()
+      }
+      if (Array.isArray(node)) {
+        const itemKey = keyedKeyAt(rulePath)
+        const serverPool = itemKey === undefined ? pool(server) : undefined
+        const submittedPool = itemKey === undefined ? pool(submitted) : undefined
+        node.forEach((item, position) => {
+          const selected = isWildcard(segment) || segment === position
+          if (itemKey !== undefined && isPlainObject(item)) {
+            const value = item[itemKey]
+            if (typeof value === "string" || typeof value === "number") {
+              const itemSegment: ItemSegment = { key: itemKey, value }
+              if (selected) descend(item, position, itemSegment, child(server, itemSegment), child(submitted, itemSegment))
+              return
+            }
+          }
+          // Pools are consumed for every element, in order, so duplicates pair
+          // correctly even when the pattern selects a single position.
+          const identity = canonicalKey(item)
+          const fromServer = take(server, serverPool, identity)
+          const fromSubmitted = take(submitted, submittedPool, identity)
+          if (selected) descend(item, position, { from: position, to: position + 1 }, fromServer, fromSubmitted)
+        })
+        return
+      }
+      for (const key of Object.keys(node)) {
+        if (!isWildcard(segment) && String(segment) !== key) continue
+        descend(node[key]!, key, key, child(server, key), child(submitted, key))
+      }
+    }
+    walk(
+      candidate,
+      { full: snapshots.currentServerState, stripped: states.currentServerState },
+      { full: snapshots.submittedState, stripped: states.submittedState },
       0,
-      [],
-      keyedKeyAt,
     )
   }
-  return result as JsonValue
+
+  let result: JsonValue = candidate
+  for (const { path, value } of writes) result = setAtPath(result, path, 0, value)
+  return result
+}
+
+function setAtPath(node: JsonValue, path: readonly (string | number)[], index: number, value: JsonValue): JsonValue {
+  if (index === path.length) return value
+  const segment = path[index]!
+  if (Array.isArray(node)) {
+    const copy = node.slice()
+    copy[segment as number] = setAtPath(node[segment as number]!, path, index + 1, value)
+    return copy
+  }
+  const object = node as JsonObject
+  const copy: JsonObject = {}
+  const key = String(segment)
+  // Keep merged output keys in the same sorted order as the rest of the merge.
+  const keys = Object.hasOwn(object, key) ? Object.keys(object) : [...Object.keys(object), key].sort()
+  for (const existing of keys) {
+    defineJsonProperty(
+      copy,
+      existing,
+      existing === key ? setAtPath(Object.hasOwn(object, key) ? object[existing]! : null, path, index + 1, value) : object[existing]!,
+    )
+  }
+  return copy
 }
 
 // ---------------------------------------------------------------------------
@@ -1227,16 +1333,7 @@ function ruleConflictFor(
       byKey.set(encodePath(match.path), match.path)
     }
   }
-  const sorted = Array.from(byKey.values()).sort(comparePath)
-  const paths: Path[] = []
-  for (const path of sorted) {
-    const covered = paths.some(
-      (existing) =>
-        existing.length < path.length &&
-        encodePath(existing) === encodePath(path.slice(0, existing.length)),
-    )
-    if (!covered) paths.push(path)
-  }
+  const paths = dropCovered(Array.from(byKey.values(), (path) => ({ path }))).map(({ path }) => path)
   const slots = (root: JsonValue): ExtendedGroupConflictSlot[] =>
     paths.map((path) => ({ path: clonePath(path), value: toConflictValue(slotAt(root, path)) }))
   return {
@@ -1272,14 +1369,21 @@ function needsReview(changes: readonly AnyChange[]): boolean {
   return false
 }
 
-function computeMergeSnapshots(
-  snapshots: MergeStateSnapshots,
-  decisions: readonly Decision[] = [],
-): MergeComputation {
+type SnapshotAnalysis = {
+  states: WorkingStates
+  violations: RuleViolation[]
+  candidateRules: CompiledRule[]
+}
+
+// Everything that depends only on the snapshots, computed once. Decision
+// rounds reuse the same snapshots object, so validation, derived stripping
+// and rule blame never repeat across rounds.
+const analyses = new WeakMap<MergeStateSnapshots, SnapshotAnalysis>()
+
+function analyzeSnapshots(snapshots: MergeStateSnapshots): SnapshotAnalysis {
+  const cached = analyses.get(snapshots)
+  if (cached !== undefined) return cached
   validateCollections(snapshots)
-  const decisionMap = choicesByKey(decisions)
-  const reviewMixed = snapshots.autoMerge === "review-mixed"
-  const collectChanges = snapshots.includeReport || reviewMixed
   const states: WorkingStates =
     snapshots.derived.length === 0
       ? snapshots
@@ -1288,10 +1392,6 @@ function computeMergeSnapshots(
           submittedState: stripDerived(snapshots.submittedState, snapshots.derived),
           currentServerState: stripDerived(snapshots.currentServerState, snapshots.derived),
         }
-
-  if (snapshots.rules.length === 0 && !reviewMixed && snapshots.derived.length === 0) {
-    return computeCore(snapshots, states, decisionMap, collectChanges)
-  }
 
   // Blame: a rule broken by an input is reported against that input, unless
   // the original already broke it and that side never touched the rule.
@@ -1320,17 +1420,38 @@ function computeMergeSnapshots(
     )
     if (!untouchedLegacy && !readsDerived) candidateRules.push(rule)
   }
+  const analysis = { states, violations, candidateRules }
+  analyses.set(snapshots, analysis)
+  return analysis
+}
+
+function computeMergeSnapshots(
+  snapshots: MergeStateSnapshots,
+  decisions: readonly Decision[] = [],
+): MergeComputation {
+  const decisionMap = choicesByKey(decisions)
+  const reviewMixed = snapshots.autoMerge === "review-mixed"
+  const collectChanges = snapshots.includeReport || reviewMixed
+
+  // Calls without rules, derived paths or review skip the analysis cache:
+  // there is nothing to reuse, and a cache entry per call costs time.
+  if (snapshots.rules.length === 0 && !reviewMixed && snapshots.derived.length === 0) {
+    validateCollections(snapshots)
+    return computeCore(snapshots, snapshots, decisionMap, collectChanges)
+  }
+
+  const { states, violations, candidateRules } = analyzeSnapshots(snapshots)
 
   const forcedByRule: ForcedSlot[] = []
   const appliedRules = new Set<string>()
   for (;;) {
     const core = computeCore(snapshots, states, decisionMap, collectChanges, forcedByRule)
-    if (violations.length > 0) return { ...core, violations }
+    if (violations.length > 0) return { ...core, violations: violations.map((violation) => ({ ...violation })) }
     if (core.conflicts.length > 0 || core.candidate === ABSENT) return core
 
     const candidate = snapshots.derived.length === 0
       ? (core.candidate as JsonValue)
-      : refillDerived(core.candidate as JsonValue, snapshots)
+      : refillDerived(core.candidate as JsonValue, snapshots, states)
 
     const ruleConflicts: RuleConflict[] = []
     let reapply = false

@@ -31,8 +31,8 @@ The design ships item-level array merging **together with** declared couplings (
 Rules match concrete paths; fewer wildcards win, then configuration order. `arrays.default` covers unmatched arrays.
 
 - **Keyed.** Items are matched by key and merged recursively through the ordinary engine, so groups, decisions, and reports work inside items. Delete versus edit conflicts on the item. Concurrent additions agree when equal and conflict otherwise. Order compares the items both edited sides hold: a one-sided reorder of original items wins; different orderings, including shared additions placed differently, produce one `reason: "order"` conflict. Ordering changes are reported (with `reason: "order"`) so the review policy sees them. Keyed and set invariants are validated in all three states before merging, independent of fast paths. Items missing from the winning order are placed right after their nearest predecessor in their own side's order.
-- **Sequence.** diff3 (Smith 1988; formalized by Khanna, Kunal and Pierce, FSTTCS 2007). Items compare by canonical JSON. Alignment trims common prefixes and suffixes, anchors on elements unique to both sides (patience diff), and solves remaining regions with an exact LCS up to a size budget; beyond it, no further matches are assumed. Fewer matches only coarsen chunks, which can add conflicts but never produces a wrong merge. Unstable chunks resolve one-sided, identical, per position (equal lengths and no position changed differently on both sides), or as a range conflict. CAM never merges inside an element both sides changed: equal lengths do not establish row correspondence, so such regions conflict, and every result element is taken whole from one side. Moves are a delete plus an insert, so a move against an edit conflicts.
-- **Set / multiset.** Membership (capped at one member) or counts (`max(0, submitted + currentServer - original)`); never conflict. Change detection and provenance compare membership or counts, never array order, and they always bypass the raw-array fast path. When only one side changed membership, that side's array is kept as written.
+- **Sequence.** diff3 (Smith 1988; formalized by Khanna, Kunal and Pierce, FSTTCS 2007). Items compare by canonical JSON. Alignment trims common prefixes and suffixes, anchors on elements unique to both sides (patience diff), and solves remaining regions with an exact LCS up to a size budget; beyond it, no further matches are assumed. Fewer matches only coarsen chunks, which can add conflicts but never produces a wrong merge. Unstable chunks resolve one-sided, identical, per position (equal lengths and no position changed differently on both sides), or as a range conflict. CAM never merges inside an element both sides changed: equal lengths do not establish row correspondence, so such regions conflict, and every result element is taken whole from one side. Moves are a delete plus an insert, so a move against an edit conflicts. A move against a delete would silently undo the delete, so after merging CAM compares every value one side deleted against its three-way count; any mismatch turns the whole array into one conflict.
+- **Set / multiset.** Membership (capped at one member) or counts merged three-way per value (identical changes agree; different changes combine their deltas, floored at zero); never conflict. Change detection and provenance compare membership or counts, never array order, and they always bypass the raw-array fast path. When only one side changed membership, that side's array is kept as written; when neither did, or both made the same change, the server's array is kept, so an order-only difference never rewrites the stored order.
 
 The engine only runs an array strategy when all three sides changed the array differently, or when a group or rule decision targets something inside it. Otherwise the existing one-sided and identical rules apply unchanged.
 
@@ -42,7 +42,7 @@ Group patterns are expanded against the three states on every merge. `ANY` links
 
 ## Derived paths
 
-Derived paths are stripped from all three states before merging, so they cannot conflict, trigger groups, or disturb sequence alignment. The result is re-filled from the current server at the corresponding location (keyed items by key, other arrays by position), else from the submitted state. Applications recompute them.
+Derived paths are stripped from all three states before merging, so they cannot conflict, trigger groups, or disturb sequence alignment. The result is re-filled from the current server at the corresponding location (keyed items by key; items of other arrays by content, since every such element is taken whole from one side, so values follow their rows after inserts and deletions), else from the submitted state. Applications recompute them.
 
 ## Rules
 
@@ -66,7 +66,7 @@ Semantic conflict detection is undecidable in general, so no merge engine can de
 
 - Existing results and types are unchanged without the new options (verified by the full existing suite).
 - Plain calls show no measurable slowdown in interleaved A/B benchmarks.
-- The root bundle grows from about 5 kB to about 11 kB (minified and brotli-compressed), because array strategies and rules share the merge engine. The size budget reflects that.
+- The root bundle grows from about 5 kB to about 12.4 kB (minified and brotli-compressed), because array strategies, mode-aware change detection and rules share the merge engine. The size budget (13 kB root, 15 kB recovery) reflects that.
 - The recovery controller's `conflicts` outcome is typed to include the new conflict kinds, and it gains an `invalid` outcome.
 
 ## Out of scope

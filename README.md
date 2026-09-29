@@ -204,10 +204,10 @@ const result = mergeStates({
 | `atomic` (default) | Values that only make sense whole | Different edits on both sides conflict at the array path |
 | `keyed` | Records with a stable ID (`key`) | Items matched by key and merged field by field. Additions and deletions merge; delete versus edit conflicts on the item; different orderings of the items both sides hold are one `reason: "order"` conflict. Missing or duplicate keys throw `CAMConfigError` in any state, even when only one side changed the array |
 | `sequence` | Ordered lists without identity | diff3, the algorithm behind git merges: unchanged regions are kept, a region changed on one side takes that side, and only regions both sides changed differently conflict. Elements are always taken whole from one side; CAM never merges inside an element both sides changed, because without identity it cannot prove they are the same row |
-| `set` | Unique values (tags, roles) | Membership merges; a member added on both sides appears once. Order is not a change: when only one side changed membership, its array is kept as written. Never conflicts |
-| `multiset` | Values that may repeat | Each value's count becomes `submitted + currentServer - original`. Order is not a change. Never conflicts |
+| `set` | Unique values (tags, roles) | Membership merges; a member added on both sides appears once. Order is not a change: when only one side changed membership, its array is kept as written; otherwise the server's order leads. Never conflicts |
+| `multiset` | Values that may repeat | Counts merge three-way per value: identical changes agree (both removing one copy removes one), and different changes combine. Order is not a change. Never conflicts |
 
-`arrays: { default: "sequence" }` applies diff3 to every array without a rule. Conflicts inside arrays use extra path segments: `{ key: "id", value: "a" }` for a keyed item and `{ from, to }` (original indices) for a sequence region. `formatConflictPath()` displays them as `/items/[id=a]/qty` and `/steps/[1..3)`. Adjacent edits in a sequence can conflict even when they do not overlap; that errs toward a conflict, never a wrong merge. Use `keyed` where items have identity.
+`arrays: { default: "sequence" }` applies diff3 to every array without a rule. Conflicts inside arrays use extra path segments: `{ key: "id", value: "a" }` for a keyed item and `{ from, to }` (original indices) for a sequence region. `formatConflictPath()` displays them as `/items/[id=a]/qty` and `/steps/[1..3)`. diff3 sees a move as a delete plus an insert, so CAM checks every value one side deleted: if the result would bring it back (another side moved it), the whole array is one conflict. Adjacent edits in a sequence can also conflict even when they do not overlap; both err toward a conflict, never a wrong merge. Use `keyed` where items have identity.
 
 ### Linked fields and derived values
 
@@ -220,7 +220,7 @@ groups: [
 ]
 ```
 
-An `EACH` conflict carries a `binding` such as `{ key: "id", value: "a" }`. Mark computed values with `derived: [["total"], ["items", ANY, "lineTotal"]]`: they are excluded from merging and conflicts, and the result carries the latest server value (or the submitted value for new items). Recompute them before saving.
+An `EACH` conflict carries a `binding` such as `{ key: "id", value: "a" }`. Mark computed values with `derived: [["total"], ["items", ANY, "lineTotal"]]`: they are excluded from merging and conflicts, and the result carries the latest server value for the same item (or the submitted value for new items). Keyed items correspond by key; items of other arrays correspond by content, so derived values follow their rows after inserts and deletions. Recompute them before saving.
 
 ### User-defined rules
 

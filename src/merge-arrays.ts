@@ -268,9 +268,16 @@ function sameSlice(
 /**
  * diff3 merge for arrays without item identity. Unchanged regions are kept; a
  * region changed on one side takes that side; a region both sides changed
- * identically is kept once. Where both changed it differently, equal-length
- * regions are paired by position and merged recursively; otherwise the region
- * is one conflict addressed by an original-index range.
+ * identically is kept once. Where both changed it differently, an equal-length
+ * region takes each position from the one side that changed it, provided no
+ * position changed on both sides; otherwise the region is one conflict
+ * addressed by an original-index range. Elements are always taken whole from
+ * one side: CAM never merges inside an element without identity.
+ *
+ * diff3 sees a move as a delete plus an insert, so a deletion on one side can
+ * be undone by the other side's move. A final per-value count check catches
+ * that: if any value one side deleted ends with a count other than the
+ * three-way count, the whole array is one conflict.
  */
 export function mergeSequence(
   original: readonly JsonValue[],
@@ -283,6 +290,9 @@ export function mergeSequence(
   const bKeys = currentServer.map(canonicalKey)
   const result: JsonValue[] = []
   let complete = true
+  // Report entries are buffered: the final count check may replace the
+  // chunk-level outcome with one whole-array conflict.
+  const changes: Parameters<ArrayMergeHooks["change"]>[] = []
 
   for (const chunk of diff3Chunks(oKeys, aKeys, bKeys)) {
     if (chunk.stable) {
@@ -298,17 +308,17 @@ export function mergeSequence(
 
     if (aUnchanged) {
       result.push(...bSlice)
-      hooks.change(range, oSlice, aSlice, bSlice, bSlice, "server-only")
+      changes.push([range, oSlice, aSlice, bSlice, bSlice, "server-only"])
       continue
     }
     if (bUnchanged) {
       result.push(...aSlice)
-      hooks.change(range, oSlice, aSlice, bSlice, aSlice, "submitted-only")
+      changes.push([range, oSlice, aSlice, bSlice, aSlice, "submitted-only"])
       continue
     }
     if (sameSlice(aKeys, chunk.aFrom, chunk.aTo, bKeys, chunk.bFrom, chunk.bTo)) {
       result.push(...aSlice)
-      hooks.change(range, oSlice, aSlice, bSlice, aSlice, "identical-both")
+      changes.push([range, oSlice, aSlice, bSlice, aSlice, "identical-both"])
       continue
     }
     if (
@@ -327,14 +337,14 @@ export function mergeSequence(
         result.push(taken)
         const bChanged = bKeys[chunk.bFrom + offset] !== oKeys[chunk.oFrom + offset]
         if (aChanged || bChanged) {
-          hooks.change(
+          changes.push([
             { from: chunk.oFrom + offset, to: chunk.oFrom + offset + 1 },
             oSlice[offset]!,
             aSlice[offset]!,
             bSlice[offset]!,
             taken,
             aChanged && bChanged ? "identical-both" : aChanged ? "submitted-only" : "server-only",
-          )
+          ])
         }
       }
       continue
@@ -346,9 +356,47 @@ export function mergeSequence(
     }
     const chosen = choice === "submitted" ? aSlice : bSlice
     result.push(...chosen)
-    hooks.change(range, oSlice, aSlice, bSlice, chosen, choice === "submitted" ? "chosen-submitted" : "chosen-currentServer")
+    changes.push([range, oSlice, aSlice, bSlice, chosen, choice === "submitted" ? "chosen-submitted" : "chosen-currentServer"])
   }
+  if (complete && undoesDeletion(oKeys, aKeys, bKeys, result.map(canonicalKey))) {
+    const whole: RangeSegment = { from: 0, to: original.length }
+    const choice = hooks.conflict(whole, original as JsonValue, submitted as JsonValue, currentServer as JsonValue)
+    if (choice === undefined) return ABSENT
+    const chosen = choice === "submitted" ? submitted : currentServer
+    hooks.change(whole, original as JsonValue, submitted as JsonValue, currentServer as JsonValue, chosen as JsonValue, choice === "submitted" ? "chosen-submitted" : "chosen-currentServer")
+    return chosen as JsonValue
+  }
+  for (const entry of changes) hooks.change(...entry)
   return complete ? result : ABSENT
+}
+
+/**
+ * True when a value one side deleted ends with a count other than its
+ * three-way count, which happens when diff3 combines one side's deletion with
+ * the other side's move of the same element.
+ */
+function undoesDeletion(
+  oKeys: readonly string[],
+  aKeys: readonly string[],
+  bKeys: readonly string[],
+  resultKeys: readonly string[],
+): boolean {
+  const tally = (keys: readonly string[]): Map<string, number> => {
+    const map = new Map<string, number>()
+    for (const key of keys) map.set(key, (map.get(key) ?? 0) + 1)
+    return map
+  }
+  const o = tally(oKeys)
+  const a = tally(aKeys)
+  const b = tally(bKeys)
+  const r = tally(resultKeys)
+  for (const [key, originalCount] of o) {
+    const submittedCount = a.get(key) ?? 0
+    const serverCount = b.get(key) ?? 0
+    if (submittedCount >= originalCount && serverCount >= originalCount) continue
+    if ((r.get(key) ?? 0) !== threeWayCount(originalCount, submittedCount, serverCount)) return true
+  }
+  return false
 }
 
 // ---------------------------------------------------------------------------
@@ -411,13 +459,17 @@ function weave(base: readonly string[], sides: readonly (readonly string[])[], k
       anchor = key
     }
   }
+  // Emit depth-first with an explicit stack: a long run of additions forms a
+  // deep chain, which recursion would turn into a stack overflow.
   const output: string[] = []
-  const emit = (key: string): void => {
+  const roots = [...(children.get(HEAD) ?? []), ...base.filter((key) => keep.has(key))]
+  const stack = roots.reverse()
+  while (stack.length > 0) {
+    const key = stack.pop()!
     output.push(key)
-    for (const child of children.get(key) ?? []) emit(child)
+    const next = children.get(key)
+    if (next !== undefined) for (let index = next.length - 1; index >= 0; index -= 1) stack.push(next[index]!)
   }
-  for (const child of children.get(HEAD) ?? []) emit(child)
-  for (const key of base) if (keep.has(key)) emit(key)
   return output
 }
 
@@ -523,6 +575,16 @@ export function assertUnique(values: readonly JsonValue[], side: string, label: 
   }
 }
 
+/**
+ * Three-way count for one value: identical changes agree (both sides removing
+ * one copy removes one copy); only different changes combine their deltas.
+ */
+export function threeWayCount(original: number, submitted: number, currentServer: number): number {
+  if (submitted === original) return currentServer
+  if (currentServer === original || submitted === currentServer) return submitted
+  return Math.max(0, submitted + currentServer - original)
+}
+
 function sameCounts(left: ReadonlyMap<string, number>, right: ReadonlyMap<string, number>): boolean {
   if (left.size !== right.size) return false
   for (const [identity, count] of left) if (right.get(identity) !== count) return false
@@ -544,8 +606,8 @@ function collectionProvenance(
 }
 
 /**
- * Merges arrays as multisets: each value's result count is
- * max(0, submitted + currentServer - original). With `unique`, inputs must not
+ * Merges arrays as multisets: each value's count merges three-way (see
+ * threeWayCount). With `unique`, inputs must not
  * repeat values, and the result is a set. Order: server elements first, then
  * submitted additions. Never conflicts.
  */
@@ -576,7 +638,7 @@ export function mergeCounted(
   }
   const budget = new Map<string, number>()
   for (const identity of new Set([...o.keys(), ...s.keys(), ...c.keys()])) {
-    const count = Math.max(0, (s.get(identity) ?? 0) + (c.get(identity) ?? 0) - (o.get(identity) ?? 0))
+    const count = threeWayCount(o.get(identity) ?? 0, s.get(identity) ?? 0, c.get(identity) ?? 0)
     // A set member added on both sides is still one member.
     budget.set(identity, unique ? Math.min(count, 1) : count)
   }

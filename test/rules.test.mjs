@@ -262,7 +262,10 @@ test("derived paths inside sequence arrays and objects", () => {
     arrays: { default: "sequence" },
     derived: [["rows", ANY, "d"], ["meta", "d"], ["rows", 0, "d"], ["missing", "d"]],
   })
-  assert.deepEqual(result.value, { meta: { d: 3, x: 2 }, rows: [{ d: 5, v: 2 }] })
+  // The only row in the result is the one the submitted side wrote ({ v: 2 }),
+  // so its derived value comes from that row, not from the server's row at the
+  // same position. Object paths still prefer the server.
+  assert.deepEqual(result.value, { meta: { d: 3, x: 2 }, rows: [{ d: 2, v: 2 }] })
 })
 
 test("rules over derived values are checked on inputs only", () => {
@@ -370,4 +373,22 @@ test("rules on an ancestor of a derived path still check the merged result", () 
   })
   assert.equal(result.kind, "conflict")
   assert.equal(result.conflicts[0].kind, "rule")
+})
+
+test("derived values in sequence arrays follow their rows, not positions", () => {
+  const result = mergeStates({
+    ...states(
+      { lines: [{ n: "a", q: 1, total: 1 }, { n: "b", q: 2, total: 2 }], note: "x" },
+      { lines: [{ n: "z", q: 9, total: 9 }, { n: "a", q: 1, total: 1 }, { n: "b", q: 2, total: 2 }], note: "x" },
+      { lines: [{ n: "a", q: 1, total: 10 }, { n: "b", q: 2, total: 20 }], note: "y" },
+    ),
+    arrays: { default: "sequence" },
+    derived: [["lines", ANY, "total"]],
+  })
+  // The inserted row keeps its own total; existing rows take the server's.
+  assert.deepEqual(result.value.lines, [
+    { n: "z", q: 9, total: 9 },
+    { n: "a", q: 1, total: 10 },
+    { n: "b", q: 2, total: 20 },
+  ])
 })
