@@ -275,9 +275,11 @@ function sameSlice(
  * one side: CAM never merges inside an element without identity.
  *
  * diff3 sees a move as a delete plus an insert, so a deletion on one side can
- * be undone by the other side's move. A final per-value count check catches
- * that: if any value one side deleted ends with a count other than the
- * three-way count, the whole array is one conflict.
+ * be undone by the other side's move. A final per-value count check over the
+ * changed regions catches that: if any value one side deleted there ends with
+ * a count other than the three-way count, the whole array is one conflict.
+ * Stable regions are identical on all sides and copied as is, so they cannot
+ * affect the outcome and are not counted.
  */
 export function mergeSequence(
   original: readonly JsonValue[],
@@ -289,6 +291,18 @@ export function mergeSequence(
   const aKeys = submitted.map(canonicalKey)
   const bKeys = currentServer.map(canonicalKey)
   const result: JsonValue[] = []
+  // Keys of the changed regions on each side and in the result, for the
+  // final count check.
+  const changed = { o: [] as string[], a: [] as string[], b: [] as string[], result: [] as string[] }
+  // Appends a changed region's elements with their precomputed keys. A loop
+  // rather than push(...slice): spreading a very large slice can exceed the
+  // engine's argument limit.
+  const append = (values: readonly JsonValue[], keys: readonly string[], from: number, to: number): void => {
+    for (let index = from; index < to; index += 1) {
+      result.push(values[index]!)
+      changed.result.push(keys[index]!)
+    }
+  }
   let complete = true
   // Report entries are buffered: the final count check may replace the
   // chunk-level outcome with one whole-array conflict.
@@ -299,6 +313,9 @@ export function mergeSequence(
       for (let index = chunk.bFrom; index < chunk.bTo; index += 1) result.push(currentServer[index]!)
       continue
     }
+    for (let index = chunk.oFrom; index < chunk.oTo; index += 1) changed.o.push(oKeys[index]!)
+    for (let index = chunk.aFrom; index < chunk.aTo; index += 1) changed.a.push(aKeys[index]!)
+    for (let index = chunk.bFrom; index < chunk.bTo; index += 1) changed.b.push(bKeys[index]!)
     const oSlice = original.slice(chunk.oFrom, chunk.oTo)
     const aSlice = submitted.slice(chunk.aFrom, chunk.aTo)
     const bSlice = currentServer.slice(chunk.bFrom, chunk.bTo)
@@ -307,17 +324,17 @@ export function mergeSequence(
     const bUnchanged = sameSlice(bKeys, chunk.bFrom, chunk.bTo, oKeys, chunk.oFrom, chunk.oTo)
 
     if (aUnchanged) {
-      result.push(...bSlice)
+      append(currentServer, bKeys, chunk.bFrom, chunk.bTo)
       changes.push([range, oSlice, aSlice, bSlice, bSlice, "server-only"])
       continue
     }
     if (bUnchanged) {
-      result.push(...aSlice)
+      append(submitted, aKeys, chunk.aFrom, chunk.aTo)
       changes.push([range, oSlice, aSlice, bSlice, aSlice, "submitted-only"])
       continue
     }
     if (sameSlice(aKeys, chunk.aFrom, chunk.aTo, bKeys, chunk.bFrom, chunk.bTo)) {
-      result.push(...aSlice)
+      append(submitted, aKeys, chunk.aFrom, chunk.aTo)
       changes.push([range, oSlice, aSlice, bSlice, aSlice, "identical-both"])
       continue
     }
@@ -334,7 +351,8 @@ export function mergeSequence(
       for (let offset = 0; offset < oSlice.length; offset += 1) {
         const aChanged = aKeys[chunk.aFrom + offset] !== oKeys[chunk.oFrom + offset]
         const taken = aChanged ? aSlice[offset]! : bSlice[offset]!
-        result.push(taken)
+        if (aChanged) append(submitted, aKeys, chunk.aFrom + offset, chunk.aFrom + offset + 1)
+        else append(currentServer, bKeys, chunk.bFrom + offset, chunk.bFrom + offset + 1)
         const bChanged = bKeys[chunk.bFrom + offset] !== oKeys[chunk.oFrom + offset]
         if (aChanged || bChanged) {
           changes.push([
@@ -355,10 +373,11 @@ export function mergeSequence(
       continue
     }
     const chosen = choice === "submitted" ? aSlice : bSlice
-    result.push(...chosen)
+    if (choice === "submitted") append(submitted, aKeys, chunk.aFrom, chunk.aTo)
+    else append(currentServer, bKeys, chunk.bFrom, chunk.bTo)
     changes.push([range, oSlice, aSlice, bSlice, chosen, choice === "submitted" ? "chosen-submitted" : "chosen-currentServer"])
   }
-  if (complete && undoesDeletion(oKeys, aKeys, bKeys, result.map(canonicalKey))) {
+  if (complete && undoesDeletion(changed.o, changed.a, changed.b, changed.result)) {
     const whole: RangeSegment = { from: 0, to: original.length }
     const choice = hooks.conflict(whole, original as JsonValue, submitted as JsonValue, currentServer as JsonValue)
     if (choice === undefined) return ABSENT
@@ -373,7 +392,8 @@ export function mergeSequence(
 /**
  * True when a value one side deleted ends with a count other than its
  * three-way count, which happens when diff3 combines one side's deletion with
- * the other side's move of the same element.
+ * the other side's move of the same element. Takes the keys of the changed
+ * regions only; only values present in the original can have been deleted.
  */
 function undoesDeletion(
   oKeys: readonly string[],
@@ -381,20 +401,22 @@ function undoesDeletion(
   bKeys: readonly string[],
   resultKeys: readonly string[],
 ): boolean {
-  const tally = (keys: readonly string[]): Map<string, number> => {
-    const map = new Map<string, number>()
-    for (const key of keys) map.set(key, (map.get(key) ?? 0) + 1)
-    return map
+  // [original, submitted, currentServer, result] counts per original value.
+  const counts = new Map<string, [number, number, number, number]>()
+  for (const key of oKeys) counts.set(key, [0, 0, 0, 0])
+  const tally = (keys: readonly string[], slot: 0 | 1 | 2 | 3): void => {
+    for (const key of keys) {
+      const entry = counts.get(key)
+      if (entry !== undefined) entry[slot] += 1
+    }
   }
-  const o = tally(oKeys)
-  const a = tally(aKeys)
-  const b = tally(bKeys)
-  const r = tally(resultKeys)
-  for (const [key, originalCount] of o) {
-    const submittedCount = a.get(key) ?? 0
-    const serverCount = b.get(key) ?? 0
-    if (submittedCount >= originalCount && serverCount >= originalCount) continue
-    if ((r.get(key) ?? 0) !== threeWayCount(originalCount, submittedCount, serverCount)) return true
+  tally(oKeys, 0)
+  tally(aKeys, 1)
+  tally(bKeys, 2)
+  tally(resultKeys, 3)
+  for (const [original, submitted, currentServer, result] of counts.values()) {
+    if (submitted >= original && currentServer >= original) continue
+    if (result !== threeWayCount(original, submitted, currentServer)) return true
   }
   return false
 }

@@ -895,7 +895,19 @@ test("sequence: a move on one side never undoes a deletion on the other", () => 
   assert.deepEqual(resolveAll(input, "currentServer").value, ["e1", "e0"])
 })
 
-test("sequence never leaves a deleted value with more copies than its three-way count", () => {
+test("sequence: copies neither side touched survive other copies' deletions", () => {
+  // Submitted deletes three copies of "x"; the server deletes one of the same
+  // copies. The last copy is untouched by both, so it stays.
+  const result = mergeStates({
+    originalState: ["x", "a", "x", "b", "x", "c", "x"],
+    submittedState: ["a", "b", "c", "x"],
+    currentServerState: ["a", "x", "b", "x", "c", "x"],
+    ...sequence,
+  })
+  assert.deepEqual(result, { ok: true, value: ["a", "b", "c", "x"], conflicts: [] })
+})
+
+test("sequence never lets one side's move undo the other side's deletion", () => {
   const list = fc.array(fc.constantFrom("a", "b", "c", "d"), { maxLength: 6 })
   const threeWay = (o, s, c) => (s === o ? c : c === o || s === c ? s : Math.max(0, s + c - o))
   const count = (values, value) => values.filter((entry) => entry === value).length
@@ -907,7 +919,12 @@ test("sequence never leaves a deleted value with more copies than its three-way 
         const o = count(original, value)
         const s = count(submitted, value)
         const c = count(server, value)
-        if (s < o || c < o) assert.equal(count(result.value, value), threeWay(o, s, c), `value ${value}`)
+        // Copies neither side touched are in both inputs (at most min(s, c));
+        // beyond those, a deleted value never exceeds its three-way count.
+        // When one side kept every copy, the bound is the three-way count.
+        if (s < o || c < o) {
+          assert.ok(count(result.value, value) <= Math.max(threeWay(o, s, c), Math.min(s, c)), `value ${value}`)
+        }
       }
     }),
     { numRuns: 2000 },

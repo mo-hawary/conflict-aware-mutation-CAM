@@ -314,7 +314,7 @@ function applyDecisions(
           : "decisions must contain exactly one choice for every current conflict",
       )
     }
-    accepted.push(...matched)
+    for (const decision of matched) accepted.push(decision)
     pending = rest
     current = mergeSnapshotsWithChoices(snapshots, accepted)
   }
