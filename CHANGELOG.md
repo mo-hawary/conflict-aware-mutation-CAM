@@ -2,6 +2,13 @@
 
 Release Please maintains the versioned entries below. Source on `main` may be ahead of the latest release. See the [migration guide](./docs/migration.md) for the validation/error changes following 0.1.x and [RELEASING.md](./RELEASING.md) for versioning policy.
 
+## [0.2.3](https://github.com/mo-hawary/conflict-aware-mutation-CAM/compare/v0.2.2...v0.2.3) (2026-09-29)
+
+
+### Features
+
+* array merging, linked fields, rules, review policy, and require() support ([#39](https://github.com/mo-hawary/conflict-aware-mutation-CAM/issues/39)) ([39e752b](https://github.com/mo-hawary/conflict-aware-mutation-CAM/commit/39e752b3cf289f8d373cfb562315d9ee1e5955a6)), closes [#28](https://github.com/mo-hawary/conflict-aware-mutation-CAM/issues/28)
+
 ## [0.2.2](https://github.com/mo-hawary/conflict-aware-mutation-CAM/compare/v0.2.1...v0.2.2) (2026-09-28)
 
 
