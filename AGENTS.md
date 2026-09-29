@@ -239,7 +239,12 @@ Arrays are atomic by default. Without array options:
 - both change to same array -> safe
 - both change differently -> conflict at the array path
 
-Opt-in array rules (`arrays`) select `keyed`, `sequence` (diff3), `set`, or `multiset` merging per path. They never change the result of a call that does not configure them. Keyed items are addressed by `{ key, value }` path segments and sequence regions by `{ from, to }` segments in original indices; these segments appear only in results of calls that use array rules. Any array strategy may add conflicts when alignment is uncertain but must never silently combine incompatible edits.
+Opt-in array rules (`arrays`) select `keyed`, `sequence` (diff3), `set`, or `multiset` merging per path. They never change the result of a call that does not configure them. Keyed items are addressed by `{ key, value }` path segments and sequence regions by `{ from, to }` segments in original indices; these segments appear only in results of calls that use array rules. Any array strategy may add conflicts when alignment is uncertain but must never silently combine incompatible edits. In particular:
+
+- `sequence` results contain only elements taken whole from one side; never merge inside an element both sides changed, because equal lengths do not prove that rows correspond
+- `set` results never contain duplicates
+- keyed and set invariants are validated in all three states, independent of merge fast paths
+- every change that shapes the result, including keyed ordering, is reported, so `autoMerge: "review-mixed"` only auto-accepts a result one side wrote
 
 Pattern groups (`ANY`, `EACH`), `derived` paths, `rules`, and `autoMerge: "review-mixed"` are likewise opt-in. They exist so that cross-field domain constraints are declared explicitly; CAM still never infers them.
 
@@ -332,6 +337,15 @@ Minimum v1 coverage:
 21. property-based tests over JSON trees
 22. fuzz tests
 23. representative benchmarks
+
+Collection, rule, and review features additionally require:
+
+24. keyed arrays: field merges, additions, deletions, delete versus edit, ordering, order conflicts, and invalid keys in any state
+25. sequence arrays: separated edits, range conflicts, reorder versus edit conflicts, and the whole-element property
+26. set and multiset arrays: membership, counts, and no duplicate set members
+27. pattern groups (`ANY`, `EACH`) and derived paths
+28. built-in and custom rules: blame per side, pre-existing violations, rule conflicts, and staged decisions across rounds
+29. `review-mixed`: the property that only a result one side wrote is auto-accepted, and the recovery controller never auto-writes a mixed candidate
 
 Every bug fix must include a regression test.
 

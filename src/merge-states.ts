@@ -1306,10 +1306,12 @@ function computeMergeSnapshots(
       violations.push({ ruleId: rule.id, side: "currentServer", message: serverMessage })
     }
     const untouchedLegacy = originalMessage !== undefined && !submittedChanged && !serverChanged
-    // Rules over derived values are checked on inputs only: the merged result
-    // carries stale derived values until the application recomputes them.
+    // Rules that target a derived value (or something inside one) are checked
+    // on inputs only: the merged result carries stale derived values until the
+    // application recomputes them. Rules on an ancestor of a derived path,
+    // such as a whole array of lines, still check the merged result.
     const readsDerived = rule.patterns.some((pattern) =>
-      snapshots.derived.some((derived) => patternsOverlap(pattern, derived)),
+      snapshots.derived.some((derived) => pattern.length >= derived.length && patternsOverlap(pattern, derived)),
     )
     if (!untouchedLegacy && !readsDerived) candidateRules.push(rule)
   }

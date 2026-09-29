@@ -12,6 +12,12 @@ A user edits an order. Someone else updates its shipping address. The first save
 
 Small, headless, and zero runtime dependencies. Use it in forms, admin panels, CMS editors, and other applications whose backend already enforces optimistic concurrency.
 
+- **Field-level merging** of nested JSON, with precise, existence-aware conflicts and never a partial result to save by accident.
+- **Array merging when you want it**: by ID, as sets or multisets, or with diff3 for ordered lists. Arrays stay atomic unless configured.
+- **Linked fields and derived values**: fields that must change together are one decision; computed values are never merged stale.
+- **Rules you define**: limits and cross-field checks CAM enforces on every merge, with clear blame when an input breaks one.
+- **Review when it matters**: optionally route any result that combines both people's changes to a person before it is saved.
+
 [API reference](https://mo-hawary.github.io/conflict-aware-mutation-CAM/) · [Examples](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/examples/README.md) · [Changelog](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/CHANGELOG.md) · [Contributing](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/CONTRIBUTING.md)
 
 ## Install
@@ -79,6 +85,7 @@ console.log(result)
 | Recognize the expected conflict error | CAM: `matchConflictError()` |
 | Fetch the latest record and its version | Your application |
 | Merge independent changes or report conflicting paths | CAM: `mergeStates()` |
+| Check declared rules and flag results that need review | CAM: `rules`, `autoMerge` (optional) |
 | Validate and review the combined result, resolve conflicts, and save with the latest version | Your application and backend |
 
 The root merge functions perform no network requests or UI rendering. An optional `conflict-aware-mutation/recovery` adapter coordinates caller-supplied callbacks; review is the default, and one automatic recovery retry requires explicit opt-in. A second writer can race confirmation, so **every write must retain the backend concurrency precondition**.
@@ -236,7 +243,7 @@ CAM evaluates each rule on both inputs and on the merged result, and reports who
 - An input that breaks a rule returns `kind: "invalid"` with `violations: [{ ruleId, side, message }]`. A pre-existing violation that neither side touched is not blamed on anyone.
 - If both inputs satisfy a rule but the merge does not, the result has a `kind: "rule"` conflict on the rule's paths. Choosing a side takes that side's values (or whole items) for those paths.
 
-Rules over `derived` paths are checked on the inputs only, because merged derived values are recomputed later.
+Rules that target a `derived` value (or a path inside one) are checked on the inputs only, because merged derived values are recomputed later. Rules on an ancestor, such as a whole array of lines, still check the merged result.
 
 ### Review policy
 
@@ -262,6 +269,7 @@ Use JSON-compatible `type` aliases for state shapes. Interfaces lack the implici
 
 - [Fetch + REST](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/examples/fetch-rest.mjs): executable ETag conflict, terminal-state guard, candidate validation, review, manual resolution, and explicit confirmation.
 - [Versioned recovery controller](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/examples/versioned-rest-recovery.mjs): explicit integer version with HTTP 409 and confirmation using the fetched version.
+- [Arrays, linked fields, and rules](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/examples/collections-and-rules.mjs): keyed lines, sets, diff3 steps, per-line price groups, derived totals, rule blame and rule conflicts, staged decisions, and `review-mixed` on one order record.
 - [React + TanStack Query](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/examples/react/tanstack-query-react.tsx): candidate review, validation, session-bound conflict choices, and confirmation before recovery writes.
 - [Browser playground](https://github.com/mo-hawary/conflict-aware-mutation-CAM/tree/main/examples/playground): edit all three snapshots and inspect the result. [Run locally](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/examples/playground/README.md).
 
@@ -271,7 +279,7 @@ Examples are application code, not extra runtime exports. Their dependencies do 
 
 CAM targets stale CRUD writes: customer profiles, inventory metadata, settings, and content records. It is not a CRDT, collaborative text editor, mutation-testing tool, or replacement for backend concurrency checks.
 
-CI exercises the merge truth table, deletion and array semantics, property-based comparison against a reference implementation, input immutability, depth boundaries, and large conflict sets. It also checks the installed package, types, coverage, explicit root/recovery bundle budgets, and integration examples. Benchmarks are report-only; runtime smoke tests are not a claim of exhaustive production coverage.
+CI exercises the merge truth table, deletion and array semantics, property-based comparison against a reference implementation, input immutability, depth boundaries, and large conflict sets. Property tests also check the collection guarantees: sequence results only contain elements taken whole from one side, set results never contain duplicates, and `review-mixed` only auto-accepts a result one side wrote. It also checks the installed package, types, coverage, explicit root/recovery bundle budgets, and integration examples. Benchmarks are report-only; runtime smoke tests are not a claim of exhaustive production coverage.
 
 ## Contribute
 

@@ -54,7 +54,7 @@ Built-in rules are JSON data; custom rules are pure synchronous functions with d
 | The original already broke it and neither side touched its paths | Ignored (pre-existing) |
 | Both inputs satisfy it, the merge does not | `kind: "rule"` conflict over the rule's expanded paths |
 
-A rule decision forces the chosen side's values at those paths and merges again; the rule is then re-checked. `applyConflictDecisions()` accepts decisions accumulated across rounds and replays them round by round against conflicts recomputed from the same snapshots; each round must be covered completely and every decision must match a round. Rules that read derived paths are checked on inputs only, because merged derived values are stale until recomputed. Structural conflicts are reported first; rule conflicts appear once structural conflicts are resolved.
+A rule decision forces the chosen side's values at those paths and merges again; the rule is then re-checked. `applyConflictDecisions()` accepts decisions accumulated across rounds and replays them round by round against conflicts recomputed from the same snapshots; each round must be covered completely and every decision must match a round. Rules that target a derived value (or a path inside one) are checked on inputs only, because merged derived values are stale until recomputed; rules on an ancestor of a derived path still check the merged result. Structural conflicts are reported first; rule conflicts appear once structural conflicts are resolved.
 
 ## Review policy
 

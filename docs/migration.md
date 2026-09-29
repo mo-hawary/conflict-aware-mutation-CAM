@@ -29,7 +29,7 @@ Non-enumerable object properties and non-enumerable extra array properties are i
 
 ## Existing merge behavior
 
-The three input names and success/conflict result shapes are unchanged. Nested objects merge recursively; arrays remain atomic. Absence still means deletion and differs from null. Outputs do not alias inputs, and negative zero is normalized to zero.
+The three input names and success/conflict result shapes are unchanged. Nested objects merge recursively; arrays remain atomic by default (see the opt-in array merging section below). Absence still means deletion and differs from null. Outputs do not alias inputs, and negative zero is normalized to zero.
 
 Validate the combined result against your domain rules and retry with the latest backend version or ETag. A structurally valid merge does not guarantee a valid business operation.
 

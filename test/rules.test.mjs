@@ -356,3 +356,18 @@ test("staged resolution: accumulated decisions replay structural and then rule r
     /stale/,
   )
 })
+
+test("rules on an ancestor of a derived path still check the merged result", () => {
+  const result = mergeStates({
+    ...states(
+      { discount: 0, lines: [{ id: "a", t: 1 }, { id: "b", t: 1 }, { id: "c", t: 1 }] },
+      { discount: 0.2, lines: [{ id: "a", t: 1 }, { id: "b", t: 1 }, { id: "c", t: 1 }] },
+      { discount: 0, lines: [{ id: "a", t: 1 }, { id: "b", t: 1 }] },
+    ),
+    arrays: { rules: [{ path: ["lines"], mode: "keyed", key: "id" }] },
+    derived: [["lines", ANY, "t"]],
+    rules: [{ id: "d", paths: [["discount"], ["lines"]], check: (s) => s.discount <= 0.1 || s.lines.length >= 3 || "needs 3 lines" }],
+  })
+  assert.equal(result.kind, "conflict")
+  assert.equal(result.conflicts[0].kind, "rule")
+})
