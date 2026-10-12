@@ -14,6 +14,12 @@ While CAM is below `1.0.0`:
 
 Release Please owns normal version bumps, `.release-please-manifest.json`, `CHANGELOG.md`, tags, and GitHub Releases. Do not manually move/create a normal release tag or edit a generated release version to force publication.
 
+## Consolidated maintenance releases
+
+The [October 2026 tooling maintenance record](./docs/toolchain-maintenance-2026-10.md) describes the aligned versions of `size-limit`, `@size-limit/preset-small-lib`, `publint`, and the pinned GitHub Actions. Consolidate linked dependency upgrades into one tested PR, using a single squash commit instead of merging separate Dependabot PRs. For CI reliability fixes, a `fix(ci):` squash title triggers one patch release under the configured Release Please policy; ordinary `chore:` and `docs:` commits do not independently force that release.
+
+Documentation and the combined lockfile ship with the change. Leave `package.json`'s `version`, `.release-please-manifest.json`, and versioned `CHANGELOG.md` entries untouched until Release Please generates the release PR. The release PR is then verified and merged separately, and npm receives one version from its validated release tag; merging the maintenance PR alone does not publish.
+
 ## Normal release flow
 
 1. Changes land on `main` with a Conventional Commit-compatible squash title.
