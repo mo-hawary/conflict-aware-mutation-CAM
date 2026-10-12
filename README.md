@@ -288,6 +288,10 @@ CAM targets stale CRUD writes: customer profiles, inventory metadata, settings, 
 
 CI exercises the merge truth table, deletion and array semantics, property-based comparison against a reference implementation, input immutability, depth boundaries, and large conflict sets. Property tests also check the collection guarantees: sequence results only contain elements taken whole from one side, set results never contain duplicates, and `review-mixed` only auto-accepts a result one side wrote. It also checks the installed package, types, coverage, explicit root/recovery bundle budgets, and integration examples. Benchmarks are report-only; runtime smoke tests are not a claim of exhaustive production coverage.
 
+## Development and CI toolchain
+
+CAM uses pinned GitHub Actions, `publint` for package-export checks, and `size-limit` for both published entry-point budgets. The current versions, SHA pins, transitive dependency changes, and release behavior are documented in the [October 2026 tooling maintenance record](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/docs/toolchain-maintenance-2026-10.md). These maintainer-only updates do not change the public merge API.
+
 ## Contribute
 
 Start with the [contribution guide](https://github.com/mo-hawary/conflict-aware-mutation-CAM/blob/main/CONTRIBUTING.md), [roadmap](https://github.com/mo-hawary/conflict-aware-mutation-CAM/issues/29), or [good first issues](https://github.com/mo-hawary/conflict-aware-mutation-CAM/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22). Small reproductions with all three states are especially helpful.

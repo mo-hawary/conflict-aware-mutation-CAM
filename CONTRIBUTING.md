@@ -47,6 +47,8 @@ Every bug fix needs a regression test that fails before the fix. For merge chang
 
 `npm run mutation` runs the slower Stryker checks. The `overrides` entry in `package.json` raises `qs` under Stryker's `typed-rest-client` dependency to a patched version; remove it once `@stryker-mutator/core` depends on `typed-rest-client` 3.x. Benchmark comparisons are report-only because shared runners are noisy. Avoid treating one timing sample as a performance guarantee.
 
+For changes to package verification or size measurement, run both `npm run lint:package` and `npm run size` with the **same installed lockfile**. The pinned validator and bundle-size tooling, exact changes, and CI workflow references are recorded in [toolchain maintenance](./docs/toolchain-maintenance-2026-10.md); do not upgrade the preset and CLI independently.
+
 ## Pull requests and releases
 
 Keep changes focused and preserve existing user work. Explain the problem, observable behavior, regression evidence, and any compatibility impact. Update examples and docs alongside contract changes. Keep README links usable on npm by using absolute repository URLs for supporting files.
