@@ -2,6 +2,13 @@
 
 Release Please maintains the versioned entries below. Source on `main` may be ahead of the latest release. See the [migration guide](./docs/migration.md) for the validation/error changes following 0.1.x and [RELEASING.md](./RELEASING.md) for versioning policy.
 
+## [0.2.4](https://github.com/mo-hawary/conflict-aware-mutation-CAM/compare/v0.2.3...v0.2.4) (2026-10-12)
+
+
+### Bug Fixes
+
+* **ci:** consolidate toolchain updates and release docs ([#46](https://github.com/mo-hawary/conflict-aware-mutation-CAM/issues/46)) ([e659986](https://github.com/mo-hawary/conflict-aware-mutation-CAM/commit/e659986493efdc033d3f9a2ea884bbee47a9a000))
+
 ## [0.2.3](https://github.com/mo-hawary/conflict-aware-mutation-CAM/compare/v0.2.2...v0.2.3) (2026-09-29)
 
 
